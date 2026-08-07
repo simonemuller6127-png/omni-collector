@@ -7,6 +7,51 @@ import { CookieCipher } from "../crypto/cookie-cipher.js";
 
 chromium.use(stealth());
 
+/** 明文 header 格式 cookie 的默认域名（B 站等以字符串存储）。 */
+const DEFAULT_DOMAINS: Record<string, string> = {
+  bilibili: ".bilibili.com",
+  youtube: ".youtube.com",
+  xiaohongshu: ".xiaohongshu.com",
+  xiaoheihe: ".xiaoheihe.cn",
+  makerworld: ".makerworld.com",
+};
+
+export interface StoredCookie {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  expires?: number;
+}
+
+/** 兼容 JSON 数组与 "k=v; k2=v2" 两种存储格式。 */
+export function parseStoredCookies(plain: string, platform: string): StoredCookie[] {
+  try {
+    const arr = JSON.parse(plain);
+    if (Array.isArray(arr)) {
+      return arr.filter((c) => c && c.name && c.value);
+    }
+  } catch {
+    /* 回退 header 格式 */
+  }
+  const domain = DEFAULT_DOMAINS[platform] ?? "";
+  const out: StoredCookie[] = [];
+  for (const pair of plain.split(";")) {
+    const idx = pair.indexOf("=");
+    if (idx <= 0) continue;
+    const name = pair.slice(0, idx).trim();
+    if (!name) continue;
+    out.push({
+      name,
+      value: pair.slice(idx + 1).trim(),
+      domain,
+      path: "/",
+      expires: Math.floor(Date.now() / 1000) + 30 * 86400,
+    });
+  }
+  return out;
+}
+
 export interface BrowserSessionOptions {
   dataDir: string;
   headless?: boolean;
@@ -57,14 +102,24 @@ export class BrowserSessionManager {
       ...(fs.existsSync(statePath) ? { storageState: statePath } : {}),
       ...(this.options.proxy ? { proxy: { server: this.options.proxy } } : {}),
     });
-    if (!fs.existsSync(statePath)) {
-      const cipher = new CookieCipher(this.options.dataDir);
-      const plain = cipher.decryptCookie(platform);
-      if (plain) {
+    // 加密 Cookie 为最新凭据，始终注入（覆盖 storageState 中的旧值）
+    const cipher = new CookieCipher(this.options.dataDir);
+    const plain = cipher.decryptCookie(platform);
+    if (plain) {
+      const stored = parseStoredCookies(plain, platform);
+      if (stored.length > 0) {
         try {
-          await context.addCookies(JSON.parse(plain) as Parameters<BrowserContext["addCookies"]>[0]);
+          await context.addCookies(
+            stored.map((c) => ({
+              name: c.name,
+              value: c.value,
+              domain: c.domain ?? DEFAULT_DOMAINS[platform] ?? "",
+              path: c.path ?? "/",
+              expires: c.expires ?? -1,
+            })) as Parameters<BrowserContext["addCookies"]>[0],
+          );
         } catch {
-          /* cookie 格式异常时忽略，交由 validateSession 判定 */
+          /* 格式异常时忽略，交由 validateSession 判定 */
         }
       }
     }
@@ -80,6 +135,8 @@ export class BrowserSessionManager {
   }
 
   async close(ctx: BrowserContext): Promise<void> {
+    const browser = ctx.browser();
     await ctx.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
   }
 }
