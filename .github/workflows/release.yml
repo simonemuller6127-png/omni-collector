@@ -14,13 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Enable pnpm via corepack
-        run: corepack enable && corepack prepare pnpm@9.0.0 --activate
+      - name: Use preinstalled Node + install pnpm
+        run: |
+          node --version
+          npm --version
+          npm install -g pnpm@9
 
       - run: pnpm install --frozen-lockfile
 
