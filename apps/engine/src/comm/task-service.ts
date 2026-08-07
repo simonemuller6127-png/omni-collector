@@ -10,6 +10,7 @@ import {
   TagRepository,
   TopicRepository,
 } from "@omni/database";
+import type { CollectionDTO } from "@omni/shared-core";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
 import { ContentGroupService } from "../group/content-group-service.js";
 import { SyncRunner } from "../sync/sync-runner.js";
@@ -73,6 +74,7 @@ export class TaskService {
       TASK_GROUP: (msg) => this.group(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
+      STATUS_QUERY: (msg) => this.statusQuery(msg),
     };
   }
 
@@ -161,6 +163,49 @@ export class TaskService {
       );
     } catch (err) {
       return error(msg.request_id, "GROUP_001", `GROUP_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 状态查询：scope=collections 返回收藏 DTO 列表（供插件展示 / 生成 Markdown）。 */
+  async statusQuery(msg: OmniMessage): Promise<OmniMessage> {
+    const scope = String(msg.payload.scope ?? "");
+    try {
+      if (scope === "collections") {
+        const collections = new CollectionRepository(this.db);
+        const groups = new ContentGroupRepository(this.db);
+        const dtos: CollectionDTO[] = collections.listAll().map((c) => {
+          const group = groups.groupOfCollection(c.id);
+          return {
+            id: c.id,
+            platform: c.platform,
+            platformItemId: c.platform_item_id,
+            url: c.url,
+            title: c.title ?? "",
+            author: c.author ?? undefined,
+            coverUrl: c.cover_url ?? undefined,
+            description: c.description ?? undefined,
+            contentType: c.content_type,
+            saveType: c.save_type,
+            contentStatus: c.content_status,
+            syncStatus: c.sync_status,
+            organizeStatus: c.organize_status,
+            priority: c.priority,
+            aiStatus: (c.ai_status as CollectionDTO["aiStatus"]) ?? undefined,
+            collectedAt: c.collected_at,
+            lastSyncedAt: c.last_synced_at ?? undefined,
+            groupId: group?.id,
+            groupName: group?.name,
+          };
+        });
+        return complete(msg.request_id, { task: "status_query", scope, collections: dtos });
+      }
+      if (scope === "groups") {
+        const groups = new ContentGroupRepository(this.db);
+        return complete(msg.request_id, { task: "status_query", scope, groups: groups.listGroups() });
+      }
+      return complete(msg.request_id, { task: "status_query", scope, ok: true });
+    } catch (err) {
+      return error(msg.request_id, "QUERY_001", `QUERY_001: ${(err as Error).message}`);
     }
   }
 

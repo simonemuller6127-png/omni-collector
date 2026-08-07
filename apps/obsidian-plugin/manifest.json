@@ -1,11 +1,13 @@
 {
   "id": "omni-collector",
   "name": "Omni Collector",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
-  "description": "全平台收藏同步与本地知识管理（Plugin + Engine 分离）",
-  "author": "omni-collector",
+  "description": "全平台收藏同步与本地知识管理（B站 / YouTube / 小红书 / MakerWorld / 小黑盒），支持 AI 整理建议与 ContentGroup 关联识别。",
+  "author": "Omni Collector",
+  "authorUrl": "https://github.com/simonemuller6127-png/omni-collector",
   "isDesktopOnly": true,
+  "fundingUrl": "",
   "main": "dist/main.js",
   "styles": ["styles.css"]
 }

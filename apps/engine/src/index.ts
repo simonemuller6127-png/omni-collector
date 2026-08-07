@@ -1,5 +1,6 @@
 import { openDatabase } from "@omni/database";
 import { createProvider } from "@omni/ai";
+import fs from "node:fs";
 import path from "node:path";
 import { EngineCommServer } from "./comm/comm-server.js";
 import { TaskService } from "./comm/task-service.js";
@@ -56,7 +57,12 @@ async function main(): Promise<void> {
 
   const service = new TaskService({
     dataDir,
-    migrationsDir: path.join(process.cwd(), "packages/database/migrations"),
+    // 部署后 migrations 位于引擎脚本同目录；仓库开发态回退到 packages/database/migrations
+    migrationsDir: (() => {
+      const scriptDir = path.dirname(path.resolve(process.argv[1] ?? ""));
+      const bundled = path.join(scriptDir, "migrations");
+      return fs.existsSync(bundled) ? bundled : path.join(process.cwd(), "packages/database/migrations");
+    })(),
     headless: true,
     getProvider: (rules) => {
       const type = rules.get("ai_provider");
@@ -81,7 +87,7 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-if (process.argv[1]?.endsWith("index.js")) {
+if (process.argv[1] && /(index\.js|engine\.cjs)$/.test(process.argv[1])) {
   void main().catch((err) => {
     console.error(`[engine] fatal: ${(err as Error).message}`);
     process.exit(1);

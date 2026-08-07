@@ -168,6 +168,27 @@ export class EngineClient {
     });
   }
 
+  /** 查询收藏列表（DTO）。 */
+  async listCollections(): Promise<import("@omni/shared-core").CollectionDTO[]> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "STATUS_QUERY",
+      payload: { scope: "collections" },
+    });
+    return (res.payload?.collections as import("@omni/shared-core").CollectionDTO[]) ?? [];
+  }
+
+  /** 同步指定平台。 */
+  async syncPlatform(platform: string, mode: "catalog" | "full" | "detail" = "full"): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_SYNC",
+      payload: { platform, mode },
+    });
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }

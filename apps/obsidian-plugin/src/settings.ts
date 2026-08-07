@@ -9,6 +9,8 @@ export interface OmniSettings {
   wsToken: string;
   /** MakerWorld 是否同步点赞内容（用户开关，默认关闭）。 */
   makerworldSyncLikes: boolean;
+  /** Node.js 可执行文件路径（Engine 子进程）；留空时使用 PATH 上的 node。 */
+  nodeBin: string;
 }
 
 export const DEFAULT_SETTINGS: OmniSettings = {
@@ -16,6 +18,7 @@ export const DEFAULT_SETTINGS: OmniSettings = {
   engineScript: "",
   wsToken: "",
   makerworldSyncLikes: false,
+  nodeBin: "",
 };
 
 export async function loadSettings(plugin: Plugin): Promise<OmniSettings> {

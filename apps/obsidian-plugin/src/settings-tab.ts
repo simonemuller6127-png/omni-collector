@@ -32,5 +32,18 @@ export class OmniSettingTab extends PluginSettingTab {
             }
           }),
       );
+
+    new Setting(containerEl)
+      .setName("Node.js 路径")
+      .setDesc("Engine 子进程使用的 Node 可执行文件；留空则使用 PATH 中的 node（Windows 可填完整路径）。")
+      .addText((text) =>
+        text
+          .setValue(this.plugin.pluginSettings.nodeBin)
+          .onChange(async (value) => {
+            this.plugin.pluginSettings.nodeBin = value;
+            await this.plugin.saveSettings();
+            this.plugin.updateEngineNodeBin();
+          }),
+      );
   }
 }

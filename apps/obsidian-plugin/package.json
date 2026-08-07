@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node esbuild.config.mjs production",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "dev": "tsc -p tsconfig.json --watch"
@@ -12,6 +12,7 @@
   "devDependencies": {
     "@omni/engine": "workspace:*",
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.1",
     "obsidian": "^1.13.1",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"

@@ -10,7 +10,7 @@ export interface CollectionDTO {
   coverUrl?: string;
   description?: string;
   contentType: string;
-  saveType: "favorited" | "watch_later";
+  saveType: "favorited" | "watch_later" | "liked";
   contentStatus: "active" | "deleted" | "unavailable" | "file_missing";
   syncStatus: "catalog" | "full" | "failed";
   organizeStatus: "unorganized" | "viewed" | "organized" | "archived";
