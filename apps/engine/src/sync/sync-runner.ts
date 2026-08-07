@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import {
   AccountRepository,
   AIRepository,
@@ -73,7 +74,9 @@ export class SyncRunner {
         logs: new SyncLogRepository(db),
         ai: new AIRepository(db),
       });
-      ctx = await sessions.create(platform);
+      // 指纹绑定平台（如 MakerWorld 的 Cloudflare 会话）需复用持久化 Profile
+      const profileDir = sessions.profileDir(platform);
+      ctx = fs.existsSync(profileDir) ? await sessions.createPersistent(platform) : await sessions.create(platform);
       return await pipeline.run(platform, mode, ctx);
     } finally {
       if (ctx) await sessions.close(ctx).catch(() => {});
