@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+out/
+
+# Turbo
+.turbo/
+
+# Test & coverage
+coverage/
+*.log
+
+# Env & secrets
+*.env
+.env
+.env.*
+
+# Omni Collector runtime data
+data/
+logs/
+cache/
+backup/
+*.enc
+.worktrees/
+
+# AI temporary workspace (never commit)
+_codex_tmp/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
