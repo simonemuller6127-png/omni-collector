@@ -1,0 +1,10 @@
+/* Omni Collector 插件样式（骨架） */
+.omni-title {
+  font-weight: 600;
+  padding: 8px 4px 4px;
+}
+.omni-status {
+  padding: 4px;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}

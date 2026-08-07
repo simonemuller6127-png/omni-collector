@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "baseUrl": ".",
+    "paths": {
+      "@omni/shared-core": ["packages/shared-core/src"],
+      "@omni/database": ["packages/database/src"],
+      "@omni/adapters": ["packages/adapters/src"],
+      "@omni/ai": ["packages/ai/src"],
+      "@omni/utils": ["packages/utils/src"]
+    }
+  }
+}

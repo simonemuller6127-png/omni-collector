@@ -1,0 +1,23 @@
+{
+  "name": "@omni/obsidian-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "dev": "tsc -p tsconfig.json --watch"
+  },
+  "devDependencies": {
+    "@omni/engine": "workspace:*",
+    "@types/ws": "^8.18.1",
+    "obsidian": "^1.13.1",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "@omni/shared-core": "workspace:*",
+    "ws": "^8.21.2"
+  }
+}

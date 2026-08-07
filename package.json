@@ -1,0 +1,15 @@
+{
+  "name": "omni-collector",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "tsc -p tsconfig.base.json --noEmit",
+    "dev:plugin": "pnpm --filter @omni/obsidian-plugin dev",
+    "dev:engine": "pnpm --filter @omni/engine dev"
+  },
+  "workspaces": ["apps/*", "packages/*"],
+  "devDependencies": { "turbo": "^2.0.0", "typescript": "^5.5.0", "vitest": "^2.0.0" }
+}

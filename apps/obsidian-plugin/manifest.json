@@ -1,0 +1,11 @@
+{
+  "id": "omni-collector",
+  "name": "Omni Collector",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "全平台收藏同步与本地知识管理（Plugin + Engine 分离）",
+  "author": "omni-collector",
+  "isDesktopOnly": true,
+  "main": "dist/main.js",
+  "styles": ["styles.css"]
+}
