@@ -26,6 +26,27 @@ export class BrowserSessionManager {
     return path.join(this.options.dataDir, "browser-states", `${platform}.json`);
   }
 
+  profileDir(platform: string): string {
+    return path.join(this.options.dataDir, "browser-profiles", platform);
+  }
+
+  /**
+   * 创建持久化浏览器 Profile（指纹绑定类平台，如小红书）：
+   * 登录态与浏览器指纹绑定，只有复用同一 user-data-dir 才能保持会话。
+   * 首次登录后，后续 headless/headful 复用同一 Profile 即可维持登录。
+   */
+  async createPersistent(platform: string): Promise<BrowserContext> {
+    const profileDir = this.profileDir(platform);
+    fs.mkdirSync(profileDir, { recursive: true });
+    return chromium.launchPersistentContext(profileDir, {
+      headless: this.options.headless ?? true,
+      locale: "zh-CN",
+      timezoneId: "Asia/Shanghai",
+      viewport: { width: 1440, height: 900 },
+      ...(this.options.proxy ? { proxy: { server: this.options.proxy } } : {}),
+    });
+  }
+
   async create(platform: string): Promise<BrowserContext> {
     const browser = await chromium.launch({ headless: this.options.headless ?? true });
     const statePath = this.statePath(platform);
