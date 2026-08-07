@@ -27,6 +27,9 @@ export interface CollectionRaw {
 }
 
 export interface CollectionDetail {
+  title?: string;
+  author?: string;
+  coverUrl?: string;
   description?: string;
   transcript?: string;
   comments?: RawComment[];
