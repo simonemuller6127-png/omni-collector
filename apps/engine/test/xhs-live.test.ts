@@ -1,17 +1,35 @@
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
+import { chromium } from "playwright-extra";
+import stealth from "puppeteer-extra-plugin-stealth";
 import { XiaohongshuAdapter } from "@omni/adapters";
-import { BrowserSessionManager } from "../src/index.js";
+import { CookieCipher } from "../src/index.js";
 
 const DATA_DIR = "D:/Github/My_Project/omni-collection/data";
-const hasSession = fs.existsSync(`${DATA_DIR}/browser-states/xiaohongshu.json`);
+chromium.use(stealth());
 
-describe.skipIf(!hasSession)("XiaohongshuAdapter (live, saved browser session)", () => {
+const cookieJson = (() => {
+  try {
+    return new CookieCipher(DATA_DIR).decryptCookie("xiaohongshu");
+  } catch {
+    return null;
+  }
+})();
+
+describe.skipIf(!cookieJson)("XiaohongshuAdapter (live, encrypted cookies)", () => {
   it(
     "validates session and pulls favorites with detail",
     async (tctx) => {
-      const manager = new BrowserSessionManager({ dataDir: DATA_DIR });
-      const ctx = await manager.create("xiaohongshu");
+      const browser = await chromium.launch({ headless: true });
+      const ctx = await browser.newContext({ locale: "zh-CN", timezoneId: "Asia/Shanghai", viewport: { width: 1440, height: 900 } });
+      const cookies = JSON.parse(cookieJson as string)
+        .filter((c: { name?: string; value?: string }) => c && c.name && c.value)
+        .map((c: Record<string, unknown>) => ({
+          ...c,
+          sameSite: ["Strict", "Lax", "None"].includes(c.sameSite as string) ? c.sameSite : undefined,
+          expires: typeof c.expirationDate === "number" ? (c.expirationDate as number) : -1,
+        }));
+      await ctx.addCookies(cookies);
       try {
         const adapter = new XiaohongshuAdapter();
         const page = await ctx.newPage();
@@ -34,7 +52,7 @@ describe.skipIf(!hasSession)("XiaohongshuAdapter (live, saved browser session)",
         expect(uni.platform).toBe("xiaohongshu");
         expect(uni.title).toBe(raw.title);
       } finally {
-        await manager.close(ctx);
+        await browser.close();
       }
     },
     240_000,

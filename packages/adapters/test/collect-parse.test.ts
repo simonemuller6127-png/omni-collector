@@ -63,6 +63,41 @@ describe("parseXhsFavoritedNotes", () => {
     expect(notes[0]).toMatchObject({ noteId: "n1", title: "扁平结构", author: "作者C" });
   });
 
+  it("parses live collect/page shape (display_title + xsec_token)", () => {
+    const json = {
+      code: 0,
+      data: {
+        cursor: "abc",
+        has_more: true,
+        notes: [
+          {
+            note_id: "6a7331db000000002402e6e7",
+            xsec_token: "ABY31dOwIA10UYBZmrQCYgVkU5EesnPGG-1fWuSsN4tlc=",
+            display_title: "AGENTS.md让AI通过率100%🚀",
+            type: "normal",
+            cover: { height: 2400, width: 1440, url: "https://sns-na-i2.xhscdn.com/x.jpg" },
+            user: { user_id: "6268f01b000000002102a65e", nickname: "ArchGenAI" },
+          },
+          {
+            note_id: "note-video",
+            display_title: "打印肌肉?画条线就能拆模型?这插件有点东西",
+            type: "video",
+            cover: { url: "https://x/v.jpg" },
+            user: { nickname: "CG快报" },
+          },
+        ],
+      },
+    };
+    const notes = parseXhsFavoritedNotes(json);
+    expect(notes[0]).toMatchObject({
+      noteId: "6a7331db000000002402e6e7",
+      title: "AGENTS.md让AI通过率100%🚀",
+      author: "ArchGenAI",
+      coverUrl: "https://sns-na-i2.xhscdn.com/x.jpg",
+    });
+    expect(notes[1].video).toBe(true);
+  });
+
   it("returns [] for unknown payload", () => {
     expect(parseXhsFavoritedNotes({ data: {} })).toEqual([]);
     expect(parseXhsFavoritedNotes(null)).toEqual([]);

@@ -27,6 +27,7 @@ export interface XhsFavoritedNote {
   author?: string;
   coverUrl?: string;
   video?: boolean;
+  xsecToken?: string;
 }
 
 function pick(obj: Record<string, unknown> | undefined | null, keys: string[]): unknown {
@@ -68,8 +69,8 @@ export function parseXhsFavoritedNotes(json: unknown): XhsFavoritedNote[] {
     const user = asRecord(card.user) ?? asRecord(note.user) ?? null;
     const cover = asRecord(card.cover) ?? asRecord(note.cover) ?? null;
     const title =
-      (pick(card, ["displayTitle", "title", "note_title"]) as string | undefined) ??
-      (pick(note, ["displayTitle", "title", "note_title"]) as string | undefined) ??
+      (pick(card, ["displayTitle", "display_title", "title", "note_title"]) as string | undefined) ??
+      (pick(note, ["displayTitle", "display_title", "title", "note_title"]) as string | undefined) ??
       "";
     const coverUrl =
       (pick(cover, ["url", "urlDefault", "url_pre"]) as string | undefined) ??
@@ -77,12 +78,16 @@ export function parseXhsFavoritedNotes(json: unknown): XhsFavoritedNote[] {
         ? (pick(asRecord(note.image_list[0]), ["url", "urlDefault"]) as string | undefined)
         : undefined);
     const type = pick(card, ["type", "modelType", "content_type"]) as string | undefined;
+    const xsecToken =
+      (pick(card, ["xsec_token", "xsecToken"]) as string | undefined) ??
+      (pick(note, ["xsec_token", "xsecToken"]) as string | undefined);
     out.push({
       noteId: String(noteId),
       title,
       author: pick(user, ["nickname", "name"]) as string | undefined,
       coverUrl,
       video: type === "video",
+      xsecToken,
     });
   }
   return out;
@@ -106,6 +111,8 @@ export class XiaohongshuAdapter extends BaseAdapter {
 
   private requests = 0;
   private failures = 0;
+  /** noteId -> xsec_token（收藏接口返回，详情页反爬令牌）。 */
+  private readonly xsecTokens = new Map<string, string>();
 
   async authenticate(ctx: BrowserContext): Promise<void> {
     const page = await ctx.newPage();
@@ -172,15 +179,57 @@ export class XiaohongshuAdapter extends BaseAdapter {
     } as Record<string, string | number>;
     const body = await this.signedGet(ctx, COLLECT_API, params, jar);
     const notes = parseXhsFavoritedNotes(body);
-    return notes.map((n, i) => ({
-      platformItemId: n.noteId,
-      url: `https://www.xiaohongshu.com/explore/${n.noteId}`,
-      title: n.title || `小红书笔记 ${n.noteId}`,
-      author: n.author,
-      coverUrl: n.coverUrl,
-      saveType: "favorited" as const,
-      extra: { contentType: n.video ? "video" : "note", video: n.video, index: i },
-    }));
+    return notes.map((n, i) => {
+      if (n.xsecToken) this.xsecTokens.set(n.noteId, n.xsecToken);
+      return {
+        platformItemId: n.noteId,
+        url: `https://www.xiaohongshu.com/explore/${n.noteId}`,
+        title: n.title || `小红书笔记 ${n.noteId}`,
+        author: n.author,
+        coverUrl: n.coverUrl,
+        saveType: "favorited" as const,
+        extra: { contentType: n.video ? "video" : "note", video: n.video, index: i },
+      };
+    });
+  }
+
+  private async signedPost(
+    ctx: BrowserContext,
+    uri: string,
+    payload: Record<string, string | number | boolean | object | unknown[]>,
+    jar: Record<string, string>,
+  ): Promise<{ code?: number; msg?: string; data?: { items?: Array<{ note_card?: Record<string, unknown> }> } }> {
+    const a1 = jar.a1 ?? "";
+    if (!a1) throw new Error("AUTH_002: xiaohongshu 缺少 a1 cookie");
+    const client = new Client();
+    const xs = client.signXS("POST", uri, a1, "xhs-pc-web", payload);
+    const xt = client.getXT();
+    const xsCommon = client.signXSCommon({ a1, web_session: jar.web_session ?? "" });
+    this.requests += 1;
+    const res = await ctx.request.post(`https://edith.xiaohongshu.com${uri}`, {
+      data: payload,
+      headers: {
+        "x-s": xs,
+        "x-t": String(xt),
+        "x-s-common": xsCommon,
+        "x-b3-traceid": client.getB3TraceId(),
+        "x-xray-traceid": client.getXrayTraceId(),
+        "content-type": "application/json;charset=UTF-8",
+        "User-Agent": UA,
+        Referer: "https://www.xiaohongshu.com/",
+        accept: "application/json",
+      },
+    });
+    const json = (await res.json()) as {
+      code?: number;
+      msg?: string;
+      data?: { items?: Array<{ note_card?: Record<string, unknown> }> };
+    };
+    if (json.code !== 0) {
+      this.failures += 1;
+      throw new Error(`XHS_API: ${uri} code=${json.code ?? "?"} msg=${json.msg ?? ""}`);
+    }
+    return json;
   }
 
   private async signedGet(
@@ -198,12 +247,18 @@ export class XiaohongshuAdapter extends BaseAdapter {
     const client = new Client();
     const xs = client.signXS("GET", uri, a1, "xhs-pc-web", params);
     const xt = client.getXT();
+    const xsCommon = client.signXSCommon({ a1, web_session: jar.web_session ?? "" });
+    const b3 = client.getB3TraceId();
+    const xray = client.getXrayTraceId();
     this.requests += 1;
     const res = await ctx.request.get(`https://edith.xiaohongshu.com${uri}`, {
       params,
       headers: {
         "x-s": xs,
         "x-t": String(xt),
+        "x-s-common": xsCommon,
+        "x-b3-traceid": b3,
+        "x-xray-traceid": xray,
         "User-Agent": UA,
         Referer: "https://www.xiaohongshu.com/",
         accept: "application/json",
@@ -255,16 +310,19 @@ export class XiaohongshuAdapter extends BaseAdapter {
 
       const notes = captured.flatMap((j) => parseXhsFavoritedNotes(j));
       if (notes.length > 0) {
-        return notes.map((n, i) => ({
-          platformItemId: n.noteId,
-          url: `https://www.xiaohongshu.com/explore/${n.noteId}`,
-          title: n.title || `小红书笔记 ${n.noteId}`,
-          author: n.author,
-          coverUrl: n.coverUrl,
-          collectedAt: undefined,
-          saveType: "favorited" as const,
-          extra: { contentType: n.video ? "video" : "note", video: n.video, index: i },
-        }));
+        return notes.map((n, i) => {
+          if (n.xsecToken) this.xsecTokens.set(n.noteId, n.xsecToken);
+          return {
+            platformItemId: n.noteId,
+            url: `https://www.xiaohongshu.com/explore/${n.noteId}`,
+            title: n.title || `小红书笔记 ${n.noteId}`,
+            author: n.author,
+            coverUrl: n.coverUrl,
+            collectedAt: undefined,
+            saveType: "favorited" as const,
+            extra: { contentType: n.video ? "video" : "note", video: n.video, index: i },
+          };
+        });
       }
       return this.parseDomFavorites(page);
     } finally {
@@ -302,19 +360,62 @@ export class XiaohongshuAdapter extends BaseAdapter {
       }
       return out;
     });
-    return items.map((it) => ({
-      platformItemId: extractXiaohongshuId(it.href) ?? it.href,
-      url: it.href,
-      title: it.title || `小红书笔记`,
-      author: it.author,
-      coverUrl: it.cover,
-      saveType: "favorited" as const,
-    }));
+    return items.map((it) => {
+      const id = extractXiaohongshuId(it.href);
+      const m = /xsec_token=([^&]+)/.exec(it.href);
+      if (id && m?.[1]) this.xsecTokens.set(id, decodeURIComponent(m[1]));
+      return {
+        platformItemId: id ?? it.href,
+        url: it.href,
+        title: it.title || `小红书笔记`,
+        author: it.author,
+        coverUrl: it.cover,
+        saveType: "favorited" as const,
+      };
+    });
   }
 
   async fetchDetail(_ctx: BrowserContext, url: string): Promise<CollectionDetail> {
     const id = extractXiaohongshuId(url);
     if (!id) throw new Error(`XHS_PARSE: cannot extract note id from ${url}`);
+    // 签名 feed API 优先（需要 xsec_token）
+    const token = this.xsecTokens.get(id);
+    if (token) {
+      try {
+        const jar = Object.fromEntries((await _ctx.cookies()).map((c) => [c.name, c.value]));
+        const body = await this.signedPost(_ctx, "/api/sns/web/v1/feed", {
+          source_note_id: id,
+          image_formats: ["jpg", "webp", "avif"],
+          extra: { need_body_topic: "1" },
+          xsec_source: "pc_feed",
+          xsec_token: token,
+        }, jar);
+        const note = body?.data?.items?.[0]?.note_card;
+        if (note) {
+          const user = asRecord(note.user);
+          const imageList = Array.isArray(note.image_list) ? (note.image_list as unknown[]) : [];
+          const time = note.time as number | undefined;
+          const publishedAt =
+            typeof time === "number" && time > 0
+              ? new Date(time > 1e12 ? time : time * 1000).toISOString()
+              : undefined;
+          return {
+            title: note.title as string | undefined,
+            author: user?.nickname as string | undefined,
+            coverUrl:
+              (asRecord(imageList[0])?.urlDefault as string | undefined) ??
+              (asRecord(imageList[0])?.url as string | undefined),
+            description: note.desc as string | undefined,
+            contentType: note.type === "video" ? "video" : "note",
+            publishedAt,
+            comments: [],
+          };
+        }
+      } catch {
+        // 签名详情失败时回退浏览器 SSR
+      }
+    }
+    // 浏览器 SSR 兜底（公开笔记页；无 xsec_token 时可能 404）
     const page = await _ctx.newPage();
     try {
       await page.goto(`https://www.xiaohongshu.com/explore/${id}`, {
