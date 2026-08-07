@@ -22,7 +22,20 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm build
+      - name: Build
+        run: |
+          set +e
+          pnpm build > /tmp/build.log 2>&1
+          code=$?
+          cat /tmp/build.log
+          exit $code
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/build.log
 
       - name: Assemble release artifacts
         run: |
