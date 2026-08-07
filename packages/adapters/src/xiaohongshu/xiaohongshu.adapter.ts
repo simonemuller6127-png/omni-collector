@@ -187,6 +187,7 @@ export class XiaohongshuAdapter extends BaseAdapter {
         title: n.title || `小红书笔记 ${n.noteId}`,
         author: n.author,
         coverUrl: n.coverUrl,
+        collectedAt: new Date().toISOString(),
         saveType: "favorited" as const,
         extra: { contentType: n.video ? "video" : "note", video: n.video, index: i },
       };
@@ -318,7 +319,7 @@ export class XiaohongshuAdapter extends BaseAdapter {
             title: n.title || `小红书笔记 ${n.noteId}`,
             author: n.author,
             coverUrl: n.coverUrl,
-            collectedAt: undefined,
+            collectedAt: new Date().toISOString(),
             saveType: "favorited" as const,
             extra: { contentType: n.video ? "video" : "note", video: n.video, index: i },
           };
@@ -370,6 +371,7 @@ export class XiaohongshuAdapter extends BaseAdapter {
         title: it.title || `小红书笔记`,
         author: it.author,
         coverUrl: it.cover,
+        collectedAt: new Date().toISOString(),
         saveType: "favorited" as const,
       };
     });
