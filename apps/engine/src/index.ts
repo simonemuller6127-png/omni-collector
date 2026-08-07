@@ -14,6 +14,8 @@ export { SyncTaskState } from "./sync/sync-task-state.js";
 export { SyncPipeline } from "./sync/sync-pipeline.js";
 export type { SyncMode, SyncReport, SyncPipelineDeps } from "./sync/sync-pipeline.js";
 export { CookieCipher } from "./crypto/cookie-cipher.js";
+export { computeDeletionStage, watchLaterExpired, titleChangeNeedsNotice } from "./rules/content-retention.js";
+export type { RetentionRules, DeletionStage } from "./rules/content-retention.js";
 
 export const PACKAGE_NAME = "@omni/engine";
 
