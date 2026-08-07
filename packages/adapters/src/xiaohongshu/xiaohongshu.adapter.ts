@@ -125,6 +125,7 @@ export class XiaohongshuAdapter extends BaseAdapter {
       if (jar.a1 && jar.web_session) {
         const me = await this.signedGet(ctx, "/api/sns/web/v2/user/me", {}, jar);
         if (me?.data?.guest === false) return "valid";
+        if (me?.data?.guest === true) return "invalid"; // 明确游客态，无需再开浏览器兜底
       }
       await page.goto(EXPLORE_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForTimeout(4000);
