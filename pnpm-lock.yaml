@@ -45,6 +45,9 @@ importers:
         specifier: ^8.21.2
         version: 8.21.2
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
@@ -56,7 +59,7 @@ importers:
         version: 5.5.2
       vitest:
         specifier: ^2.0.0
-        version: 2.0.0(@types/node@26.1.2)
+        version: 2.0.0(@types/node@22.20.1)
 
   apps/obsidian-plugin:
     dependencies:
@@ -70,6 +73,9 @@ importers:
       '@omni/engine':
         specifier: workspace:*
         version: link:../engine
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
@@ -84,7 +90,7 @@ importers:
         version: 5.5.2
       vitest:
         specifier: ^2.0.0
-        version: 2.0.0(@types/node@26.1.2)
+        version: 2.0.0(@types/node@22.20.1)
 
   packages/adapters:
     dependencies:
@@ -126,30 +132,39 @@ importers:
       '@types/better-sqlite3':
         specifier: ^7.6.0
         version: 7.6.13
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
       typescript:
         specifier: ^5.5.0
         version: 5.5.2
       vitest:
         specifier: ^2.0.0
-        version: 2.0.0(@types/node@26.1.2)
+        version: 2.0.0(@types/node@22.20.1)
 
   packages/shared-core:
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
       typescript:
         specifier: ^5.5.0
         version: 5.5.2
       vitest:
         specifier: ^2.0.0
-        version: 2.0.0(@types/node@26.1.2)
+        version: 2.0.0(@types/node@22.20.1)
 
   packages/utils:
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
       typescript:
         specifier: ^5.5.0
         version: 5.5.2
       vitest:
         specifier: ^2.0.0
-        version: 2.0.0(@types/node@26.1.2)
+        version: 2.0.0(@types/node@22.20.1)
 
 packages:
 
@@ -1519,6 +1534,7 @@ snapshots:
   '@types/node@26.1.2':
     dependencies:
       undici-types: 8.3.0
+    optional: true
 
   '@types/tern@0.23.9':
     dependencies:
@@ -1526,7 +1542,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 26.1.2
+      '@types/node': 22.20.1
 
   '@vitest/expect@2.0.0':
     dependencies:
@@ -1980,7 +1996,8 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici-types@8.3.0: {}
+  undici-types@8.3.0:
+    optional: true
 
   universalify@2.0.1: {}
 

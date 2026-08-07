@@ -1,36 +1,37 @@
-{
-  "name": "@omni/engine",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "./src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./dist/index.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "dev": "tsc -p tsconfig.json --watch"
-  },
-  "dependencies": {
-    "@omni/ai": "workspace:*",
-    "@omni/adapters": "workspace:*",
-    "@omni/database": "workspace:*",
-    "@omni/shared-core": "workspace:*",
-    "playwright": "^1.62.1",
-    "playwright-extra": "^4.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "ws": "^8.21.2"
-  },
-  "devDependencies": {
-    "@types/ws": "^8.18.1",
-    "esbuild": "^0.28.1",
-    "typescript": "^5.5.0",
-    "vitest": "^2.0.0"
-  }
+﻿{
+    "name":  "@omni/engine",
+    "version":  "0.0.0",
+    "private":  true,
+    "type":  "module",
+    "main":  "dist/index.js",
+    "types":  "./src/index.ts",
+    "exports":  {
+                    ".":  {
+                              "types":  "./src/index.ts",
+                              "default":  "./dist/index.js"
+                          }
+                },
+    "scripts":  {
+                    "build":  "tsc -p tsconfig.json",
+                    "typecheck":  "tsc -p tsconfig.json --noEmit",
+                    "test":  "vitest run --passWithNoTests",
+                    "dev":  "tsc -p tsconfig.json --watch"
+                },
+    "dependencies":  {
+                         "@omni/ai":  "workspace:*",
+                         "@omni/adapters":  "workspace:*",
+                         "@omni/database":  "workspace:*",
+                         "@omni/shared-core":  "workspace:*",
+                         "playwright":  "^1.62.1",
+                         "playwright-extra":  "^4.3.6",
+                         "puppeteer-extra-plugin-stealth":  "^2.11.2",
+                         "ws":  "^8.21.2"
+                     },
+    "devDependencies":  {
+                            "@types/ws":  "^8.18.1",
+                            "esbuild":  "^0.28.1",
+                            "typescript":  "^5.5.0",
+                            "vitest":  "^2.0.0",
+                            "@types/node":  "^22.0.0"
+                        }
 }
