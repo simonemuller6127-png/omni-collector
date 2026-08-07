@@ -18,6 +18,8 @@ export { parseStoredCookies } from "./sync/browser-session.js";
 export type { BrowserSessionOptions, StoredCookie } from "./sync/browser-session.js";
 export { SyncRunner, SUPPORTED_PLATFORMS } from "./sync/sync-runner.js";
 export type { SyncRunnerOptions } from "./sync/sync-runner.js";
+export { AiQueueRunner } from "./ai/ai-queue-runner.js";
+export type { AiQueueRunnerOptions } from "./ai/ai-queue-runner.js";
 export { CookieCipher } from "./crypto/cookie-cipher.js";
 export { computeDeletionStage, watchLaterExpired, titleChangeNeedsNotice } from "./rules/content-retention.js";
 export type { RetentionRules, DeletionStage } from "./rules/content-retention.js";

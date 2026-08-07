@@ -36,7 +36,7 @@ describe.skipIf(!cookieJson)("XiaohongshuAdapter (live, encrypted cookies)", () 
         try {
           const status = await adapter.validateSession(page);
           if (status !== "valid") {
-            tctx.skip("XHS 会话为游客态/无效，跳过 live 测试");
+            tctx.skip();
             return;
           }
         } finally {

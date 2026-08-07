@@ -23,6 +23,9 @@ importers:
       '@omni/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
+      '@omni/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@omni/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -98,12 +101,15 @@ importers:
 
   packages/ai:
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
       typescript:
         specifier: ^5.5.0
         version: 5.5.2
       vitest:
         specifier: ^2.0.0
-        version: 2.0.0(@types/node@26.1.2)
+        version: 2.0.0(@types/node@22.20.1)
 
   packages/database:
     dependencies:
@@ -1247,7 +1253,7 @@ snapshots:
 
   '@types/better-sqlite3@7.6.13':
     dependencies:
-      '@types/node': 26.1.2
+      '@types/node': 22.20.1
 
   '@types/codemirror@5.60.8':
     dependencies:

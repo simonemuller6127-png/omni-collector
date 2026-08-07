@@ -18,6 +18,7 @@
     "dev": "tsc -p tsconfig.json --watch"
   },
   "dependencies": {
+    "@omni/ai": "workspace:*",
     "@omni/adapters": "workspace:*",
     "@omni/database": "workspace:*",
     "@omni/shared-core": "workspace:*",
