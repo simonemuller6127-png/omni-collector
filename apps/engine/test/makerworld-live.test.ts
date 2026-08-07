@@ -13,7 +13,7 @@ describe.skipIf(!hasProfile)("MakerWorldAdapter (live, persistent profile)", () 
       const manager = new BrowserSessionManager({ dataDir: DATA_DIR, headless: false });
       const ctx = await manager.createPersistent("makerworld");
       try {
-        const adapter = new MakerWorldAdapter();
+        const adapter = new MakerWorldAdapter({ syncLikes: true });
         const page = await ctx.newPage();
         try {
           expect(await adapter.validateSession(page)).toBe("valid");
@@ -22,6 +22,10 @@ describe.skipIf(!hasProfile)("MakerWorldAdapter (live, persistent profile)", () 
         }
         const catalog = await adapter.fetchCatalog(ctx, {});
         expect(catalog.length).toBeGreaterThanOrEqual(1);
+        const liked = catalog.filter((r) => r.saveType === "liked");
+        const favorited = catalog.filter((r) => r.saveType === "favorited");
+        expect(favorited.length).toBeGreaterThanOrEqual(1);
+        expect(liked.length).toBeGreaterThanOrEqual(1); // 用户点赞列表独立于收藏
         const raw = catalog[0];
         expect(raw.url).toMatch(/makerworld\.com\.cn\/zh\/models\//);
         const detail = await adapter.fetchDetail(ctx, raw.url);

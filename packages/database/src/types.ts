@@ -11,7 +11,7 @@ export interface CollectionRow {
   description?: string | null;
   transcript?: string | null;
   content_type: string;
-  save_type: "favorited" | "watch_later";
+  save_type: "favorited" | "watch_later" | "liked";
   content_status: "active" | "deleted" | "unavailable" | "file_missing";
   sync_status: "catalog" | "full" | "failed";
   catalog_synced: number;

@@ -2,6 +2,7 @@ import path from "node:path";
 import { Plugin, Notice, WorkspaceLeaf } from "obsidian";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type OmniSettings } from "./settings.js";
+import { OmniSettingTab } from "./settings-tab.js";
 import { EngineClient } from "./comm/socket-client.js";
 import { OmniSidebarView, VIEW_TYPE_OMNI } from "./ui/sidebar.js";
 
@@ -37,6 +38,7 @@ export default class OmniCollectorPlugin extends Plugin {
     });
 
     this.registerView(VIEW_TYPE_OMNI, (leaf) => new OmniSidebarView(leaf, this.engine));
+    this.addSettingTab(new OmniSettingTab(this.app, this));
     this.addRibbonIcon("sparkles", "Omni Collector", () => {
       void this.activateView();
       this.engine
@@ -61,5 +63,9 @@ export default class OmniCollectorPlugin extends Plugin {
 
   onunload(): void {
     this.engine?.dispose();
+  }
+
+  async saveSettings(): Promise<void> {
+    await saveSettings(this, this.pluginSettings);
   }
 }

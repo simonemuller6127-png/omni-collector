@@ -16,6 +16,8 @@ export function extractMakerWorldId(url: string): string | null {
 const HOME_URL = "https://makerworld.com.cn/zh";
 /** 用户收藏的所有模型（收藏 tab -> 所有模型）。 */
 const USER_FAVORITES_URL = "https://makerworld.com.cn/zh/@user_{handle}/collections/models";
+/** 用户点赞的模型（/likes）。 */
+const USER_LIKES_URL = "https://makerworld.com.cn/zh/@user_{handle}/likes";
 const MODEL_URL = "https://makerworld.com.cn/zh/models/{id}";
 
 interface MwModelCard {
@@ -45,6 +47,13 @@ export class MakerWorldAdapter extends BaseAdapter {
 
   private requests = 0;
   private failures = 0;
+
+  /**
+   * @param options.syncLikes 是否同步点赞内容（默认 false，由用户开关控制）
+   */
+  constructor(private readonly options: { syncLikes?: boolean } = {}) {
+    super();
+  }
 
   async authenticate(ctx: BrowserContext): Promise<void> {
     const page = await ctx.newPage();
@@ -82,33 +91,58 @@ export class MakerWorldAdapter extends BaseAdapter {
     try {
       const handle = await this.resolveUserHandle(page);
       if (!handle) throw new Error("AUTH_002: makerworld 未登录或无法定位用户（请确认已通过 Cloudflare 验证）");
-      // 1) 用户收藏的所有模型列表
-      await page.goto(USER_FAVORITES_URL.replace("{handle}", handle), {
-        waitUntil: "domcontentloaded",
-        timeout: 90000,
-      });
-      await page.waitForTimeout(12000);
-      await page.mouse.wheel(0, 2400);
-      await this.withRandomDelay(1500, 4000);
-      await page.mouse.wheel(0, 2400);
-      await this.withRandomDelay(1500, 4000);
-
-      const cards = await this.parseModelCards(page);
-      if (cards.length === 0) return [];
-      this.requests += 1;
-      return cards.map((c) => ({
-        platformItemId: c.modelId,
-        url: c.url,
-        title: c.title,
-        author: c.author,
-        coverUrl: c.coverUrl,
-        collectedAt: new Date().toISOString(),
-        saveType: "favorited" as const,
-        extra: { contentType: "3dmodel", authorId: c.authorId },
-      }));
+      const favorites = await this.collectModels(page, USER_FAVORITES_URL.replace("{handle}", handle), "favorited");
+      const likes = this.options.syncLikes
+        ? await this.collectModels(page, USER_LIKES_URL.replace("{handle}", handle), "liked")
+        : [];
+      // 重叠模型收藏优先（同 platformItemId 只保留一条）
+      const merged = new Map<string, (typeof favorites)[number]>();
+      for (const c of [...favorites, ...likes]) {
+        if (!merged.has(c.platformItemId)) merged.set(c.platformItemId, c);
+      }
+      return Array.from(merged.values());
     } finally {
       await page.close().catch(() => {});
     }
+  }
+
+  /** 抓取单个模型列表页（收藏/点赞共用），返回带 saveType 的原始条目。 */
+  private async collectModels(
+    page: Page,
+    url: string,
+    saveType: "favorited" | "liked",
+  ): Promise<Array<CollectionRaw & { saveType: "favorited" | "liked" }>> {
+    let cards: Array<{ modelId: string; url: string; title: string; author?: string; authorId?: string; coverUrl?: string }> = [];
+    // Cloudflare 偶发挑战/慢加载：空结果时重试（最多 3 次）
+    for (let attempt = 0; attempt < 3 && cards.length === 0; attempt += 1) {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 }).catch(() => {});
+      // 等待 Cloudflare 挑战通过（最多 20 秒）
+      for (let wait = 0; wait < 7; wait += 1) {
+        await page.waitForTimeout(3000);
+        if (page.isClosed()) break;
+        const challenged = await page.evaluate(() => {
+          const text = (document.body?.innerText ?? "").slice(0, 120);
+          return /安全验证|Just a moment/.test(text);
+        }).catch(() => false);
+        if (!challenged) break;
+      }
+      await page.mouse.wheel(0, 2400);
+      await this.withRandomDelay(1500, 4000);
+      await page.mouse.wheel(0, 2400);
+      await this.withRandomDelay(1500, 4000);
+      cards = await this.parseModelCards(page);
+    }
+    this.requests += 1;
+    return cards.map((c) => ({
+      platformItemId: c.modelId,
+      url: c.url,
+      title: c.title,
+      author: c.author,
+      coverUrl: c.coverUrl,
+      collectedAt: new Date().toISOString(),
+      saveType,
+      extra: { contentType: "3dmodel", authorId: c.authorId },
+    }));
   }
 
   private async resolveUserHandle(page: Page): Promise<string | null> {

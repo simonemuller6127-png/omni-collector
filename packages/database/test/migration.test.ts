@@ -30,13 +30,13 @@ describe("MigrationManager", () => {
     const { manager, cleanup } = setupManager();
     try {
       const first = manager.migrate();
-      expect(first.applied).toHaveLength(3);
-      expect(manager.currentVersion()).toBe(3);
-      expect(manager.getDb().pragma("user_version", { simple: true })).toBe(3);
+      expect(first.applied).toHaveLength(4);
+      expect(manager.currentVersion()).toBe(4);
+      expect(manager.getDb().pragma("user_version", { simple: true })).toBe(4);
 
       const second = manager.migrate();
       expect(second.applied).toHaveLength(0);
-      expect(manager.currentVersion()).toBe(3);
+      expect(manager.currentVersion()).toBe(4);
     } finally {
       cleanup();
     }

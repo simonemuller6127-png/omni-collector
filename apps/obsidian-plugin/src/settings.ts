@@ -7,12 +7,15 @@ export interface OmniSettings {
   engineScript: string;
   /** 一次性 WebSocket 握手令牌。 */
   wsToken: string;
+  /** MakerWorld 是否同步点赞内容（用户开关，默认关闭）。 */
+  makerworldSyncLikes: boolean;
 }
 
 export const DEFAULT_SETTINGS: OmniSettings = {
   dataDir: "",
   engineScript: "",
   wsToken: "",
+  makerworldSyncLikes: false,
 };
 
 export async function loadSettings(plugin: Plugin): Promise<OmniSettings> {

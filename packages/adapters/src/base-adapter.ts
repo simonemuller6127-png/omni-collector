@@ -22,7 +22,7 @@ export interface CollectionRaw {
   author?: string;
   coverUrl?: string;
   collectedAt?: string;
-  saveType: "favorited" | "watch_later";
+  saveType: "favorited" | "watch_later" | "liked";
   extra?: Record<string, unknown>;
 }
 
@@ -48,7 +48,7 @@ export interface UniversalCollection {
   description?: string;
   transcript?: string;
   contentType: string;
-  saveType: "favorited" | "watch_later";
+  saveType: "favorited" | "watch_later" | "liked";
   collectedAt?: string;
   publishedAt?: string;
   comments: RawComment[];

@@ -65,12 +65,18 @@ export class SyncRunner {
     });
     let ctx;
     try {
+      const rules = new RuleCenter(db);
       const pipeline = new SyncPipeline({
-        getAdapter: (p) => ADAPTER_FACTORIES[p]?.(),
+        getAdapter: (p) => {
+          if (p === "makerworld") {
+            return new MakerWorldAdapter({ syncLikes: rules.getBool("makerworld_sync_likes", false) });
+          }
+          return ADAPTER_FACTORIES[p]?.();
+        },
         collections: new CollectionRepository(db),
         comments: new CommentRepository(db),
         accounts: new AccountRepository(db),
-        rules: new RuleCenter(db),
+        rules,
         logs: new SyncLogRepository(db),
         ai: new AIRepository(db),
       });

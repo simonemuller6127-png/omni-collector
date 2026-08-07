@@ -127,6 +127,16 @@ export class EngineClient {
     this.dispose();
   }
 
+  /** 更新业务规则（如 makerworld_sync_likes 用户开关）。 */
+  async updateRule(key: string, value: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "RULE_UPDATE",
+      payload: { rule_key: key, rule_value: value },
+    });
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }
