@@ -61,6 +61,8 @@ export class TaskService {
       RULE_UPDATE: (msg) => this.ruleUpdate(msg),
       TASK_SYNC: (msg) => this.sync(msg),
       TASK_AI: (msg) => this.ai(msg),
+      AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
+      AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
     };
   }
 
@@ -107,6 +109,42 @@ export class TaskService {
       return complete(msg.request_id, { task: "ai", collection_id: collectionId, result });
     } catch (err) {
       return error(msg.request_id, "AI_003", `AI_003: ${(err as Error).message}`);
+    }
+  }
+
+  /** 列出待审核的 AI 建议。 */
+  async aiReviewList(msg: OmniMessage): Promise<OmniMessage> {
+    try {
+      const pending = new AIRepository(this.db).listPendingSuggestions();
+      return complete(
+        msg.request_id,
+        {
+          task: "ai_review_list",
+          suggestions: pending.map((s) => ({
+            id: s.id,
+            collection_id: s.collection_id,
+            suggestion_type: s.suggestion_type,
+            payload: s.payload ?? undefined,
+          })),
+        },
+      );
+    } catch (err) {
+      return error(msg.request_id, "AI_004", `AI_004: ${(err as Error).message}`);
+    }
+  }
+
+  /** 用户审核建议：accepted / rejected。 */
+  async aiReviewUpdate(msg: OmniMessage): Promise<OmniMessage> {
+    const id = String(msg.payload.suggestion_id ?? "");
+    const status = String(msg.payload.status ?? "");
+    if (!id || !["accepted", "rejected", "expired"].includes(status)) {
+      return error(msg.request_id, "AI_005", "AI_005: invalid suggestion_id or status");
+    }
+    try {
+      new AIRepository(this.db).updateSuggestionStatus(id, status as "accepted" | "rejected" | "expired");
+      return complete(msg.request_id, { task: "ai_review_update", suggestion_id: id, status });
+    } catch (err) {
+      return error(msg.request_id, "AI_005", `AI_005: ${(err as Error).message}`);
     }
   }
 

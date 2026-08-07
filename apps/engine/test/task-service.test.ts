@@ -111,4 +111,45 @@ describe("TaskService (internal, fake provider)", () => {
       service.dispose();
     }
   });
+
+  it("AI_REVIEW_LIST + AI_REVIEW_UPDATE full review flow", async () => {
+    const dataDir = makeDataDir();
+    const provider = new FakeProvider();
+    const service = new TaskService({
+      dataDir,
+      migrationsDir: path.join(dataDir, "migrations"),
+      getProvider: () => provider,
+    });
+    try {
+      // 先产生一条建议
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      new CollectionRepository(db).upsertByPlatformItem("xiaohongshu", "n-1", {
+        url: "https://www.xiaohongshu.com/explore/n-1",
+        title: "AI 笔记",
+      });
+      const col = new CollectionRepository(db).findByUrl("https://www.xiaohongshu.com/explore/n-1");
+      manager.close();
+      await service.handlers().TASK_AI?.(makeMsg("TASK_AI", { collection_id: (col as { id: string }).id }));
+
+      const listRes = await service.handlers().AI_REVIEW_LIST?.(makeMsg("AI_REVIEW_LIST", {}));
+      expect(listRes?.message_type).toBe("TASK_COMPLETE");
+      const suggestions = (listRes?.payload?.suggestions ?? []) as Array<{ id: string; suggestion_type: string }>;
+      expect(suggestions).toHaveLength(1);
+
+      const updateRes = await service.handlers().AI_REVIEW_UPDATE?.(
+        makeMsg("AI_REVIEW_UPDATE", { suggestion_id: suggestions[0].id, status: "accepted" }),
+      );
+      expect(updateRes?.message_type).toBe("TASK_COMPLETE");
+
+      const after = await service.handlers().AI_REVIEW_LIST?.(makeMsg("AI_REVIEW_LIST", {}));
+      expect((after?.payload?.suggestions ?? [])).toHaveLength(0);
+
+      const bad = await service.handlers().AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: "x", status: "nope" }));
+      expect(bad?.message_type).toBe("TASK_ERROR");
+    } finally {
+      service.dispose();
+    }
+  });
 });

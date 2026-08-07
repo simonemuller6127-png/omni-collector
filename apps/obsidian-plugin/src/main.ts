@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings, type OmniSettings } from 
 import { OmniSettingTab } from "./settings-tab.js";
 import { EngineClient } from "./comm/socket-client.js";
 import { OmniSidebarView, VIEW_TYPE_OMNI } from "./ui/sidebar.js";
+import { OmniAiReviewView, VIEW_TYPE_OMNI_AI, type AiReviewSource } from "./ui/ai-review.js";
 
 export default class OmniCollectorPlugin extends Plugin {
   pluginSettings!: OmniSettings;
@@ -38,7 +39,21 @@ export default class OmniCollectorPlugin extends Plugin {
     });
 
     this.registerView(VIEW_TYPE_OMNI, (leaf) => new OmniSidebarView(leaf, this.engine));
+    this.registerView(VIEW_TYPE_OMNI_AI, (leaf) => {
+      const source: AiReviewSource = {
+        listPending: () => this.engine.listAiSuggestions(),
+        review: (id, status) => this.engine.reviewAiSuggestion(id, status).then(() => undefined),
+      };
+      return new OmniAiReviewView(leaf, source);
+    });
     this.addSettingTab(new OmniSettingTab(this.app, this));
+    this.addCommand({
+      id: "open-ai-review",
+      name: "打开 AI 建议审核",
+      callback: () => {
+        void this.openAiReviewView();
+      },
+    });
     this.addRibbonIcon("sparkles", "Omni Collector", () => {
       void this.activateView();
       this.engine
@@ -67,5 +82,15 @@ export default class OmniCollectorPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await saveSettings(this, this.pluginSettings);
+  }
+
+  private async openAiReviewView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(VIEW_TYPE_OMNI_AI)[0] ?? null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_AI, active: true });
+    }
+    if (leaf) workspace.revealLeaf(leaf);
   }
 }

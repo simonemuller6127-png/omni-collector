@@ -137,6 +137,27 @@ export class EngineClient {
     });
   }
 
+  /** 列出待审核 AI 建议。 */
+  async listAiSuggestions(): Promise<Array<{ id: string; collection_id: string; suggestion_type: string; payload?: string }>> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "AI_REVIEW_LIST",
+      payload: {},
+    });
+    return (res.payload?.suggestions as Array<{ id: string; collection_id: string; suggestion_type: string; payload?: string }>) ?? [];
+  }
+
+  /** 审核建议：accepted / rejected。 */
+  async reviewAiSuggestion(id: string, status: "accepted" | "rejected"): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "AI_REVIEW_UPDATE",
+      payload: { suggestion_id: id, status },
+    });
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }

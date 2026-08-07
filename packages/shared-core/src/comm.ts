@@ -5,6 +5,8 @@ export const MESSAGE_TYPES = [
   "ENGINE_STOP",
   "TASK_SYNC",
   "TASK_AI",
+  "AI_REVIEW_LIST",
+  "AI_REVIEW_UPDATE",
   "STATUS_QUERY",
   "RULE_UPDATE",
   "ENGINE_READY",
@@ -29,6 +31,7 @@ export const REQUIRED_PAYLOAD_FIELDS: Partial<Record<OmniMessageType, string[]>>
   ENGINE_START: ["task"],
   TASK_SYNC: ["mode"],
   TASK_AI: ["collection_id"],
+  AI_REVIEW_UPDATE: ["suggestion_id", "status"],
   STATUS_QUERY: ["scope"],
   RULE_UPDATE: ["rule_key", "rule_value"],
 };
