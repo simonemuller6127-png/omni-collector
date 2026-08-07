@@ -20,7 +20,8 @@ export function extractXiaoheiheLinkId(url: string): string | null {
 }
 
 const HOME_URL = "https://www.xiaoheihe.cn/";
-const PROFILE_URL = "https://www.xiaoheihe.cn/app/user/profile/{userId}";
+/** 收藏页直连 URL（收藏 tab 实际导航目标）。 */
+const FAVOURS_URL = "https://www.xiaoheihe.cn/app/user/favour/content";
 /** 收藏列表接口（页面自身的 hkey/nonce 签名请求）：result.links[].link。 */
 const FAV_API_RE = /\/bbs\/app\/profile\/fav\/folder\/v2\/links/;
 /** restore_login：登录态校验 + 取当前用户 id。 */
@@ -93,7 +94,7 @@ export function parseXhhFavoritePayload(json: unknown): XhhFavoriteItem[] {
  */
 export class XiaoheiheAdapter extends BaseAdapter {
   readonly platform = "xiaoheihe";
-  readonly listUrl = "https://xiaoheihe.cn/app/user/profile/{userId}";
+  readonly listUrl = "https://www.xiaoheihe.cn/app/user/favour/content";
   readonly itemSelector = ".game-item";
   readonly titleSelector = ".game-name";
   readonly urlSelector = "a";
@@ -175,18 +176,15 @@ export class XiaoheiheAdapter extends BaseAdapter {
     try {
       const userId = await this.resolveUserId(page);
       if (!userId) throw new Error("AUTH_002: xiaoheihe 未登录，无法读取收藏（请在 Engine 注入有效会话）");
-      await page.goto(PROFILE_URL.replace("{userId}", userId), {
+      await page.goto(FAVOURS_URL, {
         waitUntil: "domcontentloaded",
         timeout: 90000,
       });
-      await page.waitForTimeout(9000);
-      const favTab = page.getByText("收藏", { exact: true }).first();
-      if ((await favTab.count()) > 0) {
-        await favTab.click({ timeout: 6000 }).catch(() => {});
-        await page.waitForTimeout(7000);
+      await page.waitForTimeout(10000);
+      if (!page.isClosed()) {
+        await page.mouse.wheel(0, 2200);
+        await this.withRandomDelay(1500, 4000);
       }
-      await page.mouse.wheel(0, 2200);
-      await this.withRandomDelay(1500, 4000);
 
       const items = captured.flatMap((j) => parseXhhFavoritePayload(j));
       if (items.length > 0) {
@@ -206,7 +204,9 @@ export class XiaoheiheAdapter extends BaseAdapter {
           },
         }));
       }
-      return this.parseDomFavorites(page);
+      // 页面可能被 SPA 自动关闭：关闭后不再触碰 DOM，仅返回已抓到的 API 数据
+      if (!page.isClosed()) return this.parseDomFavorites(page);
+      return [];
     } finally {
       page.off("response", onResponse);
       await page.close().catch(() => {});

@@ -22,6 +22,7 @@
     "vitest": "^2.0.0"
   },
   "dependencies": {
-    "playwright": "^1.62.1"
+    "playwright": "^1.62.1",
+    "xhshow-js": "^1.0.0"
   }
 }

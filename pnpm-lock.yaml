@@ -82,6 +82,9 @@ importers:
       playwright:
         specifier: ^1.62.1
         version: 1.62.1
+      xhshow-js:
+        specifier: ^1.0.0
+        version: 1.0.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -579,6 +582,10 @@ packages:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
     engines: {node: '>= 8'}
 
+  crypto-js@4.2.0:
+    resolution: {integrity: sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q==}
+    deprecated: Active development of CryptoJS has been discontinued. This library is no longer maintained.
+
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
     engines: {node: '>=6.0'}
@@ -1025,6 +1032,10 @@ packages:
       utf-8-validate:
         optional: true
 
+  xhshow-js@1.0.0:
+    resolution: {integrity: sha512-W72XhGiAcpJmxY9JQP/UZ9tCQ55DvOcD/41ECaPPNDWuy1GKNQ8P4fcTNzo0HiSNXwxJTpOnRpdQHOOBkVic2A==}
+    engines: {node: '>=16.0.0'}
+
 snapshots:
 
   '@ampproject/remapping@2.3.0':
@@ -1340,6 +1351,8 @@ snapshots:
       path-key: 3.1.1
       shebang-command: 2.0.0
       which: 2.0.1
+
+  crypto-js@4.2.0: {}
 
   debug@4.4.3:
     dependencies:
@@ -1819,3 +1832,7 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.21.2: {}
+
+  xhshow-js@1.0.0:
+    dependencies:
+      crypto-js: 4.2.0
