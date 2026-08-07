@@ -1,8 +1,17 @@
 import path from "node:path";
 import type { OmniMessage } from "@omni/shared-core";
 import type { AIProvider } from "@omni/ai";
-import { AIRepository, MigrationManager, RuleCenter } from "@omni/database";
+import {
+  AIRepository,
+  CollectionRepository,
+  ContentGroupRepository,
+  MigrationManager,
+  RuleCenter,
+  TagRepository,
+  TopicRepository,
+} from "@omni/database";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
+import { ContentGroupService } from "../group/content-group-service.js";
 import { SyncRunner } from "../sync/sync-runner.js";
 import type { SyncMode } from "../sync/sync-pipeline.js";
 import type { CommHandler } from "./comm-server.js";
@@ -61,6 +70,7 @@ export class TaskService {
       RULE_UPDATE: (msg) => this.ruleUpdate(msg),
       TASK_SYNC: (msg) => this.sync(msg),
       TASK_AI: (msg) => this.ai(msg),
+      TASK_GROUP: (msg) => this.group(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
     };
@@ -133,6 +143,27 @@ export class TaskService {
     }
   }
 
+  /** 运行 ContentGroup 关联识别，生成 suggested_group 建议。 */
+  async group(msg: OmniMessage): Promise<OmniMessage> {
+    try {
+      const service = new ContentGroupService({
+        groups: new ContentGroupRepository(this.db),
+        collections: new CollectionRepository(this.db),
+        ai: new AIRepository(this.db),
+      });
+      const candidates = service.autoGroup();
+      return complete(
+        msg.request_id,
+        {
+          task: "group",
+          candidates: candidates.map((c) => ({ name: c.name, size: c.collectionIds.length, reason: c.reason })),
+        },
+      );
+    } catch (err) {
+      return error(msg.request_id, "GROUP_001", `GROUP_001: ${(err as Error).message}`);
+    }
+  }
+
   /** 用户审核建议：accepted / rejected。 */
   async aiReviewUpdate(msg: OmniMessage): Promise<OmniMessage> {
     const id = String(msg.payload.suggestion_id ?? "");
@@ -141,10 +172,52 @@ export class TaskService {
       return error(msg.request_id, "AI_005", "AI_005: invalid suggestion_id or status");
     }
     try {
-      new AIRepository(this.db).updateSuggestionStatus(id, status as "accepted" | "rejected" | "expired");
+      const aiRepo = new AIRepository(this.db);
+      const suggestion = aiRepo.findById(id);
+      if (!suggestion) {
+        return error(msg.request_id, "AI_005", "AI_005: suggestion not found");
+      }
+      if (status === "accepted") {
+        await this.materializeAccepted(suggestion);
+      }
+      aiRepo.updateSuggestionStatus(id, status as "accepted" | "rejected" | "expired");
       return complete(msg.request_id, { task: "ai_review_update", suggestion_id: id, status });
     } catch (err) {
       return error(msg.request_id, "AI_005", `AI_005: ${(err as Error).message}`);
+    }
+  }
+
+  /** 接受建议后落地：分组 / Topic / Tag。 */
+  private async materializeAccepted(suggestion: {
+    suggestion_type: string;
+    payload?: string | null;
+    collection_id: string;
+  }): Promise<void> {
+    const payload = suggestion.payload ?? "";
+    switch (suggestion.suggestion_type) {
+      case "suggested_group": {
+        new ContentGroupService({
+          groups: new ContentGroupRepository(this.db),
+          collections: new CollectionRepository(this.db),
+          ai: new AIRepository(this.db),
+        }).materializeSuggestion(payload);
+        break;
+      }
+      case "suggested_topic": {
+        const topics = new TopicRepository(this.db);
+        const topic = topics.findByName(payload) ?? topics.createTopic(payload, suggestion.collection_id);
+        topics.addCollection(topic.id, suggestion.collection_id);
+        topics.setStatus(topic.id, "accepted");
+        break;
+      }
+      case "suggested_tag": {
+        const tags = new TagRepository(this.db);
+        const tag = tags.ensureTag(payload);
+        tags.bindTag(suggestion.collection_id, tag.id, "ai");
+        break;
+      }
+      default:
+        break;
     }
   }
 

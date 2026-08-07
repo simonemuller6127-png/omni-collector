@@ -20,7 +20,11 @@ interface MarkdownMeta {
  * 禁止全文 OCR、禁止生成任何 TXT 副本。
  */
 export class FileIndexer {
-  constructor(private readonly files: FileRepository) {}
+  constructor(
+    private readonly files: FileRepository,
+    /** 增强模式：把 Markdown 系统区里的 url 关联到收藏（linked_collection_id）。 */
+    private readonly resolveCollectionId?: (url: string) => string | undefined,
+  ) {}
 
   scan(folder: string, enhanced = false): IndexReport {
     const report: IndexReport = { scanned: 0, indexed: 0, errors: [] };
@@ -57,11 +61,28 @@ export class FileIndexer {
           });
           if (enhanced) {
             if (entry.name.toLowerCase().endsWith(".md")) {
-              const meta = this.extractMarkdownMeta(fs.readFileSync(full, "utf8"));
+              const content = fs.readFileSync(full, "utf8");
+              const meta = this.extractMarkdownMeta(content);
+              const systemUrl = this.extractSystemUrl(content);
               this.files.upsertIndex(row.id, {
                 extracted_title: meta.title ?? null,
                 analysis_status: "done",
               });
+              if (systemUrl && this.resolveCollectionId) {
+                const collectionId = this.resolveCollectionId(systemUrl);
+                if (collectionId) {
+                  this.files.upsertLocalFile({
+                    file_path: full,
+                    file_name: entry.name,
+                    file_type: path.extname(entry.name).toLowerCase() || null,
+                    file_size: stat.size,
+                    created_at: stat.birthtime.toISOString(),
+                    modified_at: stat.mtime.toISOString(),
+                    file_hash: this.hashFile(full),
+                    linked_collection_id: collectionId,
+                  });
+                }
+              }
             } else {
               this.files.upsertIndex(row.id, { analysis_status: "skipped" });
             }
@@ -97,5 +118,13 @@ export class FileIndexer {
       if (h1) meta.title = h1[1].trim();
     }
     return meta;
+  }
+
+  /** 从 Markdown 系统区提取原始链接（url: xxx）。 */
+  private extractSystemUrl(content: string): string | null {
+    const m = /<!--\s*OMNI_SYSTEM_START\s*-->([\s\S]*?)<!--\s*OMNI_SYSTEM_END\s*-->/.exec(content);
+    if (!m) return null;
+    const urlMatch = /url:\s*(\S+)/.exec(m[1]);
+    return urlMatch?.[1] ?? null;
   }
 }

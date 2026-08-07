@@ -158,6 +158,16 @@ export class EngineClient {
     });
   }
 
+  /** 运行 ContentGroup 关联识别（生成 suggested_group 建议，等待用户审核）。 */
+  async runAutoGroup(): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_GROUP",
+      payload: {},
+    });
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }

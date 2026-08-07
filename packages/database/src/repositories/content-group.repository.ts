@@ -64,4 +64,29 @@ export class ContentGroupRepository {
       )
       .all(groupId) as CollectionRow[];
   }
+
+  listGroups(limit = 200): Array<ContentGroupRow & { collection_count: number }> {
+    return this.db
+      .prepare(
+        `SELECT g.*, COUNT(m.collection_id) AS collection_count
+         FROM content_groups g
+         LEFT JOIN collection_group_mapping m ON m.group_id = g.id
+         GROUP BY g.id
+         ORDER BY collection_count DESC, g.created_at ASC
+         LIMIT ?`,
+      )
+      .all(limit) as Array<ContentGroupRow & { collection_count: number }>;
+  }
+
+  renameGroup(groupId: string, name: string): void {
+    this.db
+      .prepare("UPDATE content_groups SET name = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(name, groupId);
+  }
+
+  deleteGroup(groupId: string): void {
+    this.db
+      .prepare("DELETE FROM content_groups WHERE id = ?")
+      .run(groupId);
+  }
 }

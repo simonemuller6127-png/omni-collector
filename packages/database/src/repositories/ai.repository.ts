@@ -99,4 +99,10 @@ export class AIRepository {
       : "SELECT * FROM ai_suggestions WHERE status = 'pending' ORDER BY created_at ASC";
     return (limit ? this.db.prepare(sql).all(limit) : this.db.prepare(sql).all()) as AiSuggestionRow[];
   }
+
+  findById(id: string): AiSuggestionRow | undefined {
+    return this.db.prepare("SELECT * FROM ai_suggestions WHERE id = ?").get(id) as
+      | AiSuggestionRow
+      | undefined;
+  }
 }

@@ -25,6 +25,8 @@ export { AiQueueRunner } from "./ai/ai-queue-runner.js";
 export type { AiQueueRunnerOptions } from "./ai/ai-queue-runner.js";
 export { TaskService } from "./comm/task-service.js";
 export type { TaskServiceOptions } from "./comm/task-service.js";
+export { ContentGroupService, findGroupCandidates, normalizeEntity, seriesBaseName } from "./group/content-group-service.js";
+export type { ContentGroupDeps, GroupCandidate } from "./group/content-group-service.js";
 export { CookieCipher } from "./crypto/cookie-cipher.js";
 export { computeDeletionStage, watchLaterExpired, titleChangeNeedsNotice } from "./rules/content-retention.js";
 export type { RetentionRules, DeletionStage } from "./rules/content-retention.js";

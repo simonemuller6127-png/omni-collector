@@ -91,6 +91,20 @@ export class CollectionRepository extends BaseRepository<CollectionRow> {
     return (limit ? this.db.prepare(sql).all(status, limit) : this.db.prepare(sql).all(status)) as CollectionRow[];
   }
 
+  listAll(limit?: number): CollectionRow[] {
+    const sql = limit
+      ? "SELECT * FROM collections WHERE content_status = 'active' ORDER BY collected_at ASC LIMIT ?"
+      : "SELECT * FROM collections WHERE content_status = 'active' ORDER BY collected_at ASC";
+    return (limit ? this.db.prepare(sql).all(limit) : this.db.prepare(sql).all()) as CollectionRow[];
+  }
+
+  listByOrganizeStatus(status: CollectionRow["organize_status"], limit?: number): CollectionRow[] {
+    const sql = limit
+      ? "SELECT * FROM collections WHERE organize_status = ? ORDER BY collected_at DESC LIMIT ?"
+      : "SELECT * FROM collections WHERE organize_status = ? ORDER BY collected_at DESC";
+    return (limit ? this.db.prepare(sql).all(status, limit) : this.db.prepare(sql).all(status)) as CollectionRow[];
+  }
+
   listPendingInbox(limit?: number): CollectionRow[] {
     const sql = limit
       ? "SELECT * FROM collections WHERE inbox_status = 'pending' ORDER BY collected_at ASC LIMIT ?"

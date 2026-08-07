@@ -54,6 +54,19 @@ export default class OmniCollectorPlugin extends Plugin {
         void this.openAiReviewView();
       },
     });
+    this.addCommand({
+      id: "run-group-recognition",
+      name: "运行 ContentGroup 关联识别",
+      callback: async () => {
+        try {
+          const res = await this.engine.runAutoGroup();
+          const candidates = (res.payload?.candidates ?? []) as Array<{ name: string; size: number; reason: string }>;
+          new Notice(`分组识别完成：发现 ${candidates.length} 个候选（请到 AI 建议审核确认）`);
+        } catch (err) {
+          new Notice(`分组识别失败：${(err as Error).message}`);
+        }
+      },
+    });
     this.addRibbonIcon("sparkles", "Omni Collector", () => {
       void this.activateView();
       this.engine

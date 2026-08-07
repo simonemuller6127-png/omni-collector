@@ -4,7 +4,15 @@ import path from "node:path";
 import { describe, expect, it, afterAll } from "vitest";
 import type { AIProvider } from "@omni/ai";
 import type { OmniMessage } from "@omni/shared-core";
-import { AIRepository, CollectionRepository, MigrationManager, RuleCenter } from "@omni/database";
+import {
+  AIRepository,
+  CollectionRepository,
+  ContentGroupRepository,
+  MigrationManager,
+  RuleCenter,
+  TagRepository,
+  TopicRepository,
+} from "@omni/database";
 import { TaskService } from "../src/index.js";
 
 const REAL_MIGRATIONS = "D:/Github/My_Project/omni-collection/packages/database/migrations";
@@ -148,6 +156,52 @@ describe("TaskService (internal, fake provider)", () => {
 
       const bad = await service.handlers().AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: "x", status: "nope" }));
       expect(bad?.message_type).toBe("TASK_ERROR");
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("accepting suggested_group / suggested_topic / suggested_tag materializes", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const collections = new CollectionRepository(db);
+      const c1 = collections.upsertByPlatformItem("bilibili", "bv1", { url: "https://x/1", title: "AI 编程实战", author: "张三" });
+      const c2 = collections.upsertByPlatformItem("youtube", "yt1", { url: "https://x/2", title: "AI 编程实战", author: "张三" });
+      const ai = new AIRepository(db);
+      const groupS = ai.saveSuggestion({
+        collection_id: c1.id,
+        suggestion_type: "suggested_group",
+        payload: JSON.stringify({ name: "AI 编程实战", collection_ids: [c1.id, c2.id] }),
+      });
+      const topicS = ai.saveSuggestion({
+        collection_id: c1.id,
+        suggestion_type: "suggested_topic",
+        payload: "AI 编程",
+      });
+      const tagS = ai.saveSuggestion({
+        collection_id: c1.id,
+        suggestion_type: "suggested_tag",
+        payload: "编程",
+      });
+      manager.close();
+
+      const h = service.handlers();
+      expect((await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: groupS.id, status: "accepted" })))?.message_type).toBe("TASK_COMPLETE");
+      expect((await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: topicS.id, status: "accepted" })))?.message_type).toBe("TASK_COMPLETE");
+      expect((await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: tagS.id, status: "accepted" })))?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const vdb = verifier.getDb();
+      const groups = new ContentGroupRepository(vdb);
+      expect(groups.groupOfCollection(c1.id)?.name).toBe("AI 编程实战");
+      expect(new TopicRepository(vdb).findByName("AI 编程")?.status).toBe("accepted");
+      expect(new TagRepository(vdb).listCollectionsByTag("编程", "ai")).toContain(c1.id);
+      verifier.close();
     } finally {
       service.dispose();
     }
