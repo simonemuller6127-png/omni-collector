@@ -13,6 +13,8 @@ export type { IndexReport } from "./fileindex/file-indexer.js";
 export { SyncTaskState } from "./sync/sync-task-state.js";
 export { SyncPipeline } from "./sync/sync-pipeline.js";
 export type { SyncMode, SyncReport, SyncPipelineDeps } from "./sync/sync-pipeline.js";
+export { BrowserSessionManager } from "./sync/browser-session.js";
+export type { BrowserSessionOptions } from "./sync/browser-session.js";
 export { CookieCipher } from "./crypto/cookie-cipher.js";
 export { computeDeletionStage, watchLaterExpired, titleChangeNeedsNotice } from "./rules/content-retention.js";
 export type { RetentionRules, DeletionStage } from "./rules/content-retention.js";

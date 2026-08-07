@@ -17,5 +17,6 @@
       "@omni/ai": ["packages/ai/src"],
       "@omni/utils": ["packages/utils/src"]
     }
-  }
+  },
+  "exclude": ["node_modules", "dist", "data", "_codex_tmp", ".worktrees"]
 }

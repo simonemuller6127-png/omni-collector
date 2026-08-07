@@ -15,4 +15,8 @@ export { getMixinKey, signParams } from "./bilibili/wbi.js";
 export { YouTubeAdapter, extractYoutubeId } from "./youtube/youtube.adapter.js";
 export { XiaohongshuAdapter, extractXiaohongshuId } from "./xiaohongshu/xiaohongshu.adapter.js";
 export { MakerWorldAdapter, extractMakerWorldId } from "./makerworld/makerworld.adapter.js";
-export { XiaoheiheAdapter, extractXiaoheiheId } from "./xiaoheihe/xiaoheihe.adapter.js";
+export {
+  XiaoheiheAdapter,
+  extractXiaoheiheId,
+  extractXiaoheiheLinkId,
+} from "./xiaoheihe/xiaoheihe.adapter.js";

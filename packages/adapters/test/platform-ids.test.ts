@@ -4,6 +4,7 @@ import {
   extractXiaohongshuId,
   extractMakerWorldId,
   extractXiaoheiheId,
+  extractXiaoheiheLinkId,
   YouTubeAdapter,
   XiaohongshuAdapter,
   MakerWorldAdapter,
@@ -35,6 +36,8 @@ describe("platform id extraction", () => {
     expect(extractXiaoheiheId("https://xiaoheihe.cn/game/100001")).toBe("100001");
     expect(extractXiaoheiheId("https://api.xiaoheihe.cn/app/42")).toBe("42");
     expect(extractXiaoheiheId("https://example.com")).toBeNull();
+    expect(extractXiaoheiheLinkId("https://www.xiaoheihe.cn/app/bbs/link/187318769")).toBe("187318769");
+    expect(extractXiaoheiheLinkId("https://xiaoheihe.cn/game/100001")).toBeNull();
   });
 });
 
@@ -61,6 +64,6 @@ describe("adapter normalize mapping", () => {
     const xhh = new XiaoheiheAdapter().normalize(
       { platformItemId: "2", url: "https://xiaoheihe.cn/game/2", title: "G", saveType: "favorited" },
     );
-    expect(xhh.contentType).toBe("game");
+    expect(xhh.contentType).toBe("post");
   });
 });
