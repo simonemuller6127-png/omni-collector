@@ -14,25 +14,42 @@ export class MarkdownBuilder {
       `platform: ${dto.platform}`,
       `url: ${dto.url}`,
       `sync_status: ${dto.syncStatus}`,
-    ].join("\n");
+    ].join('\n');
+    const tags = (dto.tags ?? []).map((t) => `"${t.replace(/"/g, '\\"')}"`).join(', ');
+    const comments = (dto.comments ?? []).map((c) => `- **${c.author}**：${c.content}`).join('\n');
     return [
-      "---",
-      "# Omni Collector System Zone",
+      '---',
+      `platform: ${dto.platform}`,
+      `url: ${dto.url}`,
+      `priority: ${dto.priority}`,
+      `organize_status: ${dto.organizeStatus}`,
+      ...(tags ? [`tags: [${tags}]`] : []),
+      '---',
+      '---',
+      '# Omni Collector System Zone',
       SYSTEM_START,
       system,
       SYSTEM_END,
-      "---",
-      "",
+      '---',
+      '',
       `# ${dto.title}`,
-      "",
-      "<!-- 以下为用户私有编辑区，任何自动化逻辑禁止修改 -->",
-      "## 我的笔记",
-      "",
-      "## 精选评论",
-      "",
-      "## 评分与优先级",
-      "",
-    ].join("\n");
+      '',
+      ...(dto.coverUrl ? [`![cover](${dto.coverUrl})`, ''] : []),
+      ...(dto.author ? [`作者：${dto.author}`, ''] : []),
+      ...(dto.description ? ['## 简介', '', dto.description, ''] : []),
+      ...(comments ? ['## 评论', '', comments, ''] : []),
+      '## 整理与优先级',
+      '',
+      `优先级：${dto.priority} / 整理状态：${dto.organizeStatus}`,
+      '',
+      '<!-- 以下为用户私有编辑区，任何自动化逻辑禁止修改 -->',
+      '## 我的笔记',
+      '',
+      '## 精选评论',
+      '',
+      '## 评分与优先级',
+      '',
+    ].join('\n');
   }
 
   validateMarkers(md: string): boolean {

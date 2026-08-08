@@ -464,8 +464,12 @@ export class XiaohongshuAdapter extends BaseAdapter {
     }
   }
 
-  /** 按需抓取笔记正文（签名 feed，不落盘；需要 xsec_token）。 */
-  async fetchNoteText(ctx: BrowserContext, noteId: string, xsecToken: string): Promise<{ title: string; text: string } | null> {
+  /** 按需抓取笔记正文 + 评论（签名接口，不落盘；需要 xsec_token）。 */
+  async fetchNoteText(
+    ctx: BrowserContext,
+    noteId: string,
+    xsecToken: string,
+  ): Promise<{ title: string; text: string; comments: Array<{ author: string; content: string; likeCount: number }> } | null> {
     const jar = Object.fromEntries((await ctx.cookies()).map((c) => [c.name, c.value]));
     try {
       const body = await this.signedPost(ctx, "/api/sns/web/v1/feed", {
@@ -477,9 +481,35 @@ export class XiaohongshuAdapter extends BaseAdapter {
       }, jar);
       const note = body?.data?.items?.[0]?.note_card;
       if (!note) return null;
+      // 评论（1 页 20 条）
+      const comments: Array<{ author: string; content: string; likeCount: number }> = [];
+      try {
+        const cBody = await this.signedGet(ctx, "/api/sns/web/v2/comment/page", {
+          note_id: noteId,
+          cursor: "",
+          top_comment_id: "",
+          image_formats: "jpg,webp,avif",
+          xsec_token: xsecToken,
+        }, jar);
+        const rawComments = (cBody?.data?.comments ?? []) as Array<{
+          content?: string;
+          like_count?: number;
+          user_info?: { nickname?: string };
+        }>;
+        for (const c of rawComments.slice(0, 20)) {
+          comments.push({
+            author: c.user_info?.nickname ?? "",
+            content: c.content ?? "",
+            likeCount: c.like_count ?? 0,
+          });
+        }
+      } catch {
+        // 评论失败不影响正文
+      }
       return {
         title: (note.title as string) ?? "",
         text: (note.desc as string) ?? "",
+        comments,
       };
     } catch {
       return null;

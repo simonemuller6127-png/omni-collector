@@ -25,6 +25,12 @@ export interface OmniSettings {
   autoStartEngine: boolean;
   /** 收藏列表默认视图：list（纯文字）| card（缩略图卡片）。 */
   viewMode: "list" | "card";
+  /** 本地文件扫描目录列表。 */
+  localFolders: string[];
+  /** 是否自动扫描本地目录。 */
+  localAutoScan: boolean;
+  /** 自动扫描间隔（分钟）。 */
+  localAutoScanMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: OmniSettings = {
@@ -40,6 +46,9 @@ export const DEFAULT_SETTINGS: OmniSettings = {
   initialSyncMode: "catalog",
   autoStartEngine: true,
   viewMode: "list",
+  localFolders: [],
+  localAutoScan: false,
+  localAutoScanMinutes: 30,
 };
 
 export async function loadSettings(plugin: Plugin): Promise<OmniSettings> {

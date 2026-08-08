@@ -1,5 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type OmniCollectorPlugin from "./main.js";
+import { FolderSuggest } from "./ui/folder-suggest.js";
 
 /** 设置页：用户可配置项（当前：MakerWorld 是否同步点赞内容）。 */
 export class OmniSettingTab extends PluginSettingTab {
@@ -121,12 +122,81 @@ export class OmniSettingTab extends PluginSettingTab {
 
     containerEl.createEl("h3", { text: "本地文件" });
     new Setting(containerEl)
-      .setName("扫描并关联本地文件")
-      .setDesc("扫描库内「Omni Collector」文件夹（或自定义路径）中的 .md / .pdf，按系统区 URL 自动关联到收藏。")
+      .setName("已加入的目录")
+      .setDesc("扫描这些目录中的 .md / .pdf，按系统区 URL 自动关联到收藏。")
       .addButton((btn) =>
-        btn.setButtonText("选择文件夹并扫描").setCta().onClick(() => {
-          void this.plugin.scanLocalFiles();
+        btn.setButtonText("立即扫描全部目录").setCta().onClick(() => {
+          void this.plugin.scanAllLocalFolders();
         }),
+      );
+    const folderList = containerEl.createEl("div", { cls: "omni-folder-list" });
+    const renderFolders = (): void => {
+      folderList.empty();
+      if (this.plugin.pluginSettings.localFolders.length === 0) {
+        folderList.createEl("div", { text: "（尚未加入目录）", cls: "omni-meta-text" });
+        return;
+      }
+      for (const folder of this.plugin.pluginSettings.localFolders) {
+        const row = folderList.createEl("div", { cls: "omni-folder-row" });
+        row.createEl("span", { text: folder, cls: "omni-folder-path" });
+        row.createEl("button", { text: "移除", cls: "omni-btn omni-btn-sm" }).addEventListener("click", async () => {
+          this.plugin.pluginSettings.localFolders = this.plugin.pluginSettings.localFolders.filter((f) => f !== folder);
+          await this.plugin.saveSettings();
+          renderFolders();
+        });
+      }
+    };
+    renderFolders();
+
+    let newFolder = "";
+    new Setting(containerEl)
+      .setName("添加目录")
+      .setDesc("可直接粘贴路径（自动去掉引号），或输入时从列表选择库内文件夹。")
+      .addText((text) => {
+        text.setPlaceholder("D:\\Obsidian\\Zukunftkai\\Omni Collector");
+        text.onChange((v) => {
+          newFolder = v.replace(/^["']|["']$/g, "");
+        });
+        new FolderSuggest(this.app, text.inputEl);
+        return text;
+      })
+      .addButton((btn) =>
+        btn.setButtonText("添加").onClick(async () => {
+          const folder = newFolder.replace(/^["']|["']$/g, "");
+          if (!folder) {
+            new Notice("请输入目录路径");
+            return;
+          }
+          if (!this.plugin.pluginSettings.localFolders.includes(folder)) {
+            this.plugin.pluginSettings.localFolders = [...this.plugin.pluginSettings.localFolders, folder];
+            await this.plugin.saveSettings();
+            renderFolders();
+          }
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("自动扫描")
+      .setDesc("定时自动扫描已加入的目录（扫描是轻量索引，不会下载内容）。")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.pluginSettings.localAutoScan).onChange(async (value) => {
+          this.plugin.pluginSettings.localAutoScan = value;
+          await this.plugin.saveSettings();
+          this.plugin.reloadAutoScan();
+        }),
+      )
+      .addDropdown((dd) =>
+        dd
+          .addOption("15", "每 15 分钟")
+          .addOption("30", "每 30 分钟")
+          .addOption("60", "每小时")
+          .addOption("360", "每 6 小时")
+          .setValue(String(this.plugin.pluginSettings.localAutoScanMinutes))
+          .onChange(async (v) => {
+            this.plugin.pluginSettings.localAutoScanMinutes = Number(v);
+            await this.plugin.saveSettings();
+            this.plugin.reloadAutoScan();
+          }),
       );
   }
 }

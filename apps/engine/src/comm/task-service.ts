@@ -59,6 +59,9 @@ export class TaskService {
   private readonly manager: MigrationManager;
   private readonly db: ReturnType<MigrationManager["getDb"]>;
   private readonly rules: RuleCenter;
+  private fetchSessions?: BrowserSessionManager;
+  private readonly fetchContexts = new Map<string, import('playwright').BrowserContext>();
+  private readonly fetchCache = new Map<string, { ts: number; result: Record<string, unknown> }>();
 
   constructor(private readonly opts: TaskServiceOptions) {
     this.manager = new MigrationManager(
@@ -83,6 +86,7 @@ export class TaskService {
       TASK_PRIORITY: (msg) => this.priority(msg),
       TASK_INDEX: (msg) => this.index(msg),
       TASK_FETCH: (msg) => this.fetchText(msg),
+      TASK_CONVERT: (msg) => this.convert(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
@@ -284,6 +288,38 @@ export class TaskService {
         };
         return complete(msg.request_id, { task: "status_query", scope, collection: dto });
       }
+      if (scope === "local_files") {
+        const rows = this.db
+          .prepare(
+            `SELECT f.file_path, f.file_name, f.file_type, f.file_size, f.modified_at, f.linked_collection_id, c.title AS linked_title
+             FROM local_files f LEFT JOIN collections c ON c.id = f.linked_collection_id
+             WHERE f.content_status = 'active'
+             ORDER BY f.modified_at DESC LIMIT 500`,
+          )
+          .all() as Array<{
+          file_path: string;
+          file_name: string;
+          file_type: string | null;
+          file_size: number | null;
+          modified_at: string | null;
+          linked_collection_id: string | null;
+          linked_title: string | null;
+        }>;
+        return complete(msg.request_id, { task: "status_query", scope, files: rows });
+      }
+      if (scope === "summary") {
+        const total = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE content_status='active'").get() as { n: number };
+        const unorganized = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE organize_status='unorganized'").get() as { n: number };
+        const important = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE priority IN ('important','project')").get() as { n: number };
+        const aiPending = this.db.prepare("SELECT COUNT(*) AS n FROM ai_suggestions WHERE status='pending'").get() as { n: number };
+        const watchLater = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE save_type='watch_later'").get() as { n: number };
+        const localFiles = this.db.prepare("SELECT COUNT(*) AS n FROM local_files WHERE content_status='active'").get() as { n: number };
+        return complete(msg.request_id, {
+          task: "status_query",
+          scope,
+          summary: { total: total.n, unorganized: unorganized.n, important: important.n, aiPending: aiPending.n, watchLater: watchLater.n, localFiles: localFiles.n },
+        });
+      }
       return complete(msg.request_id, { task: "status_query", scope, ok: true });
     } catch (err) {
       return error(msg.request_id, "QUERY_001", `QUERY_001: ${(err as Error).message}`);
@@ -357,6 +393,30 @@ export class TaskService {
     }
   }
 
+  /** 稍后再看处理流：转为正式收藏（save_type=favorited）或归档完成。 */
+  async convert(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const to = String(msg.payload.to ?? "");
+    if (!collectionId || !["favorited", "archived"].includes(to)) {
+      return error(msg.request_id, "CONV_001", "CONV_001: invalid collection_id or to");
+    }
+    try {
+      const collections = new CollectionRepository(this.db);
+      if (to === "favorited") {
+        this.db
+          .prepare("UPDATE collections SET save_type='favorited', updated_at=? WHERE id=?")
+          .run(new Date().toISOString(), collectionId);
+      } else {
+        this.db
+          .prepare("UPDATE collections SET organize_status='archived', updated_at=? WHERE id=?")
+          .run(new Date().toISOString(), collectionId);
+      }
+      return complete(msg.request_id, { task: "convert", collection_id: collectionId, to });
+    } catch (err) {
+      return error(msg.request_id, "CONV_001", `CONV_001: ${(err as Error).message}`);
+    }
+  }
+
   /** 本地文件索引：扫描 Markdown/PDF，按 OMNI_SYSTEM url 关联到收藏。 */
   async index(msg: OmniMessage): Promise<OmniMessage> {
     const folder = String(msg.payload.folder ?? "");
@@ -374,50 +434,75 @@ export class TaskService {
 
   /** 按需抓取收藏网页正文（不落盘）：小红书走签名 feed，其余浏览器提取。 */
   async fetchText(msg: OmniMessage): Promise<OmniMessage> {
-    const url = String(msg.payload.url ?? "");
-    if (!url) return error(msg.request_id, "FETCH_001", "FETCH_001: missing url");
+    const url = String(msg.payload.url ?? '');
+    if (!url) return error(msg.request_id, 'FETCH_001', 'FETCH_001: missing url');
+    const cached = this.fetchCache.get(url);
+    if (cached && Date.now() - cached.ts < 10 * 60 * 1000) {
+      return complete(msg.request_id, { task: 'fetch', url, ...cached.result });
+    }
     const col = new CollectionRepository(this.db).findByUrl(url);
-    const platform = col?.platform ?? String(msg.payload.platform ?? "");
-    const sessions = new BrowserSessionManager({ dataDir: this.opts.dataDir, headless: true });
-    let ctx;
+    const platform = col?.platform ?? String(msg.payload.platform ?? '');
     try {
-      ctx = await sessions.create(platform);
-      // 小红书：签名 feed（需要 xsec_token，存在 extra_json）
-      if (col?.platform === "xiaohongshu") {
+      const ctx = await this.getFetchContext(platform);
+      if (col?.platform === 'xiaohongshu') {
         const extra = (() => {
-          try {
-            return JSON.parse(col.extra_json ?? "{}") as { xsecToken?: string };
-          } catch {
-            return {};
-          }
+          try { return JSON.parse(col.extra_json ?? '{}') as { xsecToken?: string }; } catch { return {}; }
         })();
         const noteId = /(?:explore|discovery\/item|note)\/([0-9a-zA-Z]+)/.exec(url)?.[1];
         if (noteId && extra.xsecToken) {
           const adapter = new XiaohongshuAdapter();
           const result = await adapter.fetchNoteText(ctx, noteId, extra.xsecToken);
           if (result) {
-            return complete(msg.request_id, { task: "fetch", url, platform, title: result.title, text: result.text.slice(0, 20000) });
+            const payload = {
+              task: 'fetch', url, platform,
+              title: result.title,
+              text: result.text.slice(0, 20000),
+              comments: result.comments,
+            };
+            this.fetchCache.set(url, { ts: Date.now(), result: payload });
+            return complete(msg.request_id, payload);
           }
         }
-        return error(msg.request_id, "FETCH_002", "FETCH_002: 小红书正文需重新同步获取 xsec_token（风控期内暂不可用）");
+        return error(msg.request_id, 'FETCH_002', 'FETCH_002: XHS text needs xsec_token (re-sync required after risk-control cooldown)');
       }
-      // 其余平台：浏览器打开页面提取正文
       const page = await ctx.newPage();
       try {
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
-        await page.waitForTimeout(4000);
-        const title = await page.title().catch(() => "");
-        const text = await page.evaluate(() => (document.body?.innerText ?? "").replace(/\n{2,}/g, "\n").slice(0, 20000)).catch(() => "");
-        return complete(msg.request_id, { task: "fetch", url, platform, title: title.slice(0, 200), text });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+        await page.waitForSelector('main', { timeout: 8000 }).catch(() => {});
+        await page.waitForTimeout(500);
+        const title = await page.title().catch(() => '');
+        const text = await page.evaluate(() => {
+          const pick = (el: Element | null | undefined) => {
+            if (!el) return '';
+            const clone = el.cloneNode(true) as HTMLElement;
+            for (const sel of ['header','footer','nav','aside','script','style',"[class*='nav']","[class*='header']","[class*='footer']"]) {
+              clone.querySelectorAll(sel).forEach((n: Element) => n.remove());
+            }
+            return (clone.innerText || '').replace(/\n{2,}/g, '\n').trim();
+          };
+          const main = pick(document.querySelector('main'));
+          return main.length > 200 ? main : pick(document.body);
+        }).catch(() => '');
+        const payload = { task: 'fetch', url, platform, title: title.slice(0, 200), text };
+        this.fetchCache.set(url, { ts: Date.now(), result: payload });
+        return complete(msg.request_id, payload);
       } finally {
         await page.close().catch(() => {});
       }
     } catch (err) {
-      return error(msg.request_id, "FETCH_001", `FETCH_001: ${(err as Error).message}`);
-    } finally {
-      if (ctx) await sessions.close(ctx).catch(() => {});
+      return error(msg.request_id, 'FETCH_001', `FETCH_001: ${(err as Error).message}`);
     }
   }
+
+  private async getFetchContext(platform: string): Promise<import('playwright').BrowserContext> {
+    const existing = this.fetchContexts.get(platform);
+    if (existing) return existing;
+    this.fetchSessions ??= new BrowserSessionManager({ dataDir: this.opts.dataDir, headless: true });
+    const ctx = await this.fetchSessions.create(platform);
+    this.fetchContexts.set(platform, ctx);
+    return ctx;
+  }
+
 
   /** 用户审核建议：accepted / rejected。 */
   async aiReviewUpdate(msg: OmniMessage): Promise<OmniMessage> {
@@ -477,6 +562,10 @@ export class TaskService {
   }
 
   dispose(): void {
+    for (const ctx of this.fetchContexts.values()) {
+      void ctx.close().catch(() => {});
+    }
+    this.fetchContexts.clear();
     this.manager.close();
   }
 }

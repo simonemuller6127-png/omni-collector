@@ -29,6 +29,7 @@ export class OmniSidebarView extends ItemView {
   private statusEl!: HTMLElement;
   private dotEl!: HTMLElement;
   private totalEl!: HTMLElement;
+  private summaryEl!: HTMLElement;
   private startBtn!: HTMLElement;
   private platformEls = new Map<string, HTMLElement>();
   private busy = false;
@@ -79,6 +80,7 @@ export class OmniSidebarView extends ItemView {
       });
     });
     this.totalEl = container.createEl("div", { cls: "omni-total" });
+    this.summaryEl = container.createEl("div", { cls: "omni-total omni-summary" });
 
     // 同步区
     container.createEl("div", { text: "同步", cls: "omni-section-title" });
@@ -146,6 +148,10 @@ export class OmniSidebarView extends ItemView {
           if (el) el.setText(`${p.count} 条 · ${p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleDateString("zh-CN") : "未同步"}`);
         }
         this.totalEl.setText(`已同步 ${total} 条收藏`);
+        const summary = await this.engine.getSummary().catch(() => null);
+        if (summary) {
+          this.summaryEl.setText(`未整理 ${summary.unorganized} · 重要/项目 ${summary.important} · 稍后再看 ${summary.watchLater} · 待审 AI ${summary.aiPending} · 本地文件 ${summary.localFiles}`);
+        }
       } catch {
         // 状态查询失败不覆盖连接状态
       }

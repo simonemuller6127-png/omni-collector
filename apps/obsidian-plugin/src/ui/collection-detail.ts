@@ -5,11 +5,13 @@ export const VIEW_TYPE_OMNI_DETAIL = "omni-collector-detail";
 
 export interface DetailDataSource {
   get(collectionId: string): Promise<CollectionDTO | null>;
-  fetchText(url: string): Promise<{ title?: string; text?: string }>;
+  fetchText(url: string): Promise<{ title?: string; text?: string; comments?: Array<{ author: string; content: string; likeCount: number }> }>;
   onOrganize(collectionId: string, state: CollectionDTO["organizeStatus"]): Promise<void>;
   onPriority(collectionId: string, priority: CollectionDTO["priority"]): Promise<void>;
   onTag(collectionId: string, tag: string): Promise<void>;
   onTopic(collectionId: string, topic: string): Promise<void>;
+  openLocalFile(filePath: string): void;
+  ensureCover(url: string): Promise<string | null>;
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -79,12 +81,14 @@ export class OmniCollectionDetailView extends ItemView {
       return;
     }
 
-    // 封面
+    // 封面（本地缓存，加速显示）
     if (item.coverUrl) {
-      container.createEl("img", { cls: "omni-detail-cover", attr: { src: item.coverUrl, referrerpolicy: "no-referrer" } });
+      const img = container.createEl("img", { cls: "omni-detail-cover", attr: { referrerpolicy: "no-referrer" } });
+      void this.source.ensureCover(item.coverUrl).then((src) => {
+        if (src) img.setAttribute("src", src);
+      });
     }
 
-    // 标题 + 元信息
     container.createEl("div", { text: item.title || item.platformItemId, cls: "omni-detail-title" });
     const meta = container.createEl("div", { cls: "omni-row-meta" });
     meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform" });
@@ -96,7 +100,12 @@ export class OmniCollectionDetailView extends ItemView {
     const embed = embedUrl(item);
     if (embed) {
       container.createEl("div", { cls: "omni-detail-player" }).createEl("iframe", {
-        attr: { src: embed, allow: "fullscreen; picture-in-picture; encrypted-media", allowfullscreen: "", style: "width:100%;aspect-ratio:16/9;border:0;border-radius:8px;" },
+        attr: {
+          src: embed,
+          allow: "fullscreen; picture-in-picture; encrypted-media",
+          allowfullscreen: "",
+          style: "width:100%;aspect-ratio:16/9;border:0;border-radius:8px;",
+        },
       });
     } else {
       container
@@ -106,7 +115,7 @@ export class OmniCollectionDetailView extends ItemView {
         });
     }
 
-    // 描述
+    // 简介
     if (item.description) {
       container.createEl("div", { text: "简介", cls: "omni-section-title" });
       container.createEl("div", { text: item.description, cls: "omni-detail-desc" });
@@ -124,12 +133,19 @@ export class OmniCollectionDetailView extends ItemView {
         .then((res) => {
           bodyBtn.setText("重新加载正文");
           bodyBtn.removeClass("omni-btn-disabled");
-          if (res.text) {
-            bodyText.setText(res.text);
-            bodyText.show();
-          } else {
-            bodyText.setText("正文暂不可用（平台限制或需重新同步）");
-            bodyText.show();
+          bodyText.setText(res.text || "正文暂不可用（平台限制或需重新同步）");
+          bodyText.show();
+          if (res.comments && res.comments.length > 0) {
+            let section = container.querySelector(".omni-detail-comments");
+            if (!section) {
+              container.createEl("div", { text: "评论", cls: "omni-section-title" });
+              section = container.createEl("div", { cls: "omni-detail-comments" });
+            }
+            for (const c of res.comments) {
+              const row = section.createEl("div", { cls: "omni-comment" });
+              row.createEl("span", { text: c.author, cls: "omni-comment-author" });
+              row.createEl("span", { text: c.content, cls: "omni-comment-content" });
+            }
           }
         })
         .catch((e) => {
@@ -148,7 +164,7 @@ export class OmniCollectionDetailView extends ItemView {
     const topicBtn = chips.createEl("button", { text: "＋Topic", cls: "omni-chip" });
     topicBtn.addEventListener("click", () => this.promptText("归入 Topic", "输入 Topic 名", (v) => this.source.onTopic(item.id, v)));
 
-    // 评论（已同步的）
+    // 已同步评论
     if ((item.comments ?? []).length > 0) {
       container.createEl("div", { text: "评论", cls: "omni-section-title" });
       const comments = container.createEl("div", { cls: "omni-detail-comments" });
@@ -167,6 +183,11 @@ export class OmniCollectionDetailView extends ItemView {
         const name = f.split(/[\\/]/).pop() ?? f;
         files.createEl("div", { text: `📄 ${name}`, cls: "omni-file-row", attr: { title: f } });
       }
+      const openBtn = container.createEl("button", { text: "打开笔记", cls: "omni-btn omni-btn-sm" });
+      openBtn.addEventListener("click", () => {
+        const first = (item.linkedFiles ?? [])[0];
+        if (first) this.source.openLocalFile(first);
+      });
     }
 
     // 整理操作
@@ -194,17 +215,7 @@ export class OmniCollectionDetailView extends ItemView {
     const modal = new Modal(this.app);
     modal.titleEl.setText(title);
     const input = modal.contentEl.createEl("input", { type: "text", placeholder });
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && input.value.trim()) {
-        void submit(input.value.trim())
-          .then(() => {
-            modal.close();
-            new Notice("已保存");
-          })
-          .catch((err) => new Notice(`保存失败：${(err as Error).message}`));
-      }
-    });
-    modal.contentEl.createEl("button", { text: "确定", cls: "omni-btn omni-btn-primary" }).addEventListener("click", () => {
+    const done = (): void => {
       if (input.value.trim()) {
         void submit(input.value.trim())
           .then(() => {
@@ -213,7 +224,11 @@ export class OmniCollectionDetailView extends ItemView {
           })
           .catch((err) => new Notice(`保存失败：${(err as Error).message}`));
       }
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") done();
     });
+    modal.contentEl.createEl("button", { text: "确定", cls: "omni-btn omni-btn-primary" }).addEventListener("click", done);
     modal.open();
   }
 

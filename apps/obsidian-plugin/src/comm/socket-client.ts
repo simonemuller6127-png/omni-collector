@@ -352,7 +352,7 @@ export class EngineClient {
   }
 
   /** 按需抓取网页正文（不落盘）。 */
-  async fetchPageText(url: string): Promise<{ title?: string; text?: string }> {
+  async fetchPageText(url: string): Promise<{ title?: string; text?: string; comments?: Array<{ author: string; content: string; likeCount: number }> }> {
     const res = await this.request({
       request_id: randomUUID(),
       timestamp: new Date().toISOString(),
@@ -362,6 +362,41 @@ export class EngineClient {
     return {
       title: (res.payload?.title as string | undefined) ?? undefined,
       text: (res.payload?.text as string | undefined) ?? undefined,
+      comments: (res.payload?.comments as Array<{ author: string; content: string; likeCount: number }> | undefined) ?? undefined,
+    };
+  }
+
+  /** 稍后再看处理：转为收藏或归档。 */
+  async convertCollection(collectionId: string, to: "favorited" | "archived"): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_CONVERT",
+      payload: { collection_id: collectionId, to },
+    });
+  }
+
+  /** 查询本地文件索引。 */
+  async listLocalFiles(): Promise<Array<{ file_path: string; file_name: string; file_type: string | null; linked_collection_id: string | null; linked_title: string | null }>> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "STATUS_QUERY",
+      payload: { scope: "local_files" },
+    });
+    return (res.payload?.files as Array<{ file_path: string; file_name: string; file_type: string | null; linked_collection_id: string | null; linked_title: string | null }>) ?? [];
+  }
+
+  /** 查询汇总统计。 */
+  async getSummary(): Promise<{ total: number; unorganized: number; important: number; aiPending: number; watchLater: number; localFiles: number }> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "STATUS_QUERY",
+      payload: { scope: "summary" },
+    });
+    return (res.payload?.summary as { total: number; unorganized: number; important: number; aiPending: number; watchLater: number; localFiles: number }) ?? {
+      total: 0, unorganized: 0, important: 0, aiPending: 0, watchLater: 0, localFiles: 0,
     };
   }
 

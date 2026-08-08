@@ -1,5 +1,5 @@
 import path from "node:path";
-import { Modal, Notice, Plugin, Setting, WorkspaceLeaf } from "obsidian";
+import { Modal, Notice, Plugin, requestUrl, Setting, WorkspaceLeaf } from "obsidian";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type OmniSettings } from "./settings.js";
 import { OmniSettingTab } from "./settings-tab.js";
@@ -33,6 +33,7 @@ export default class OmniCollectorPlugin extends Plugin {
       this.pluginSettings.wsToken = randomUUID();
     }
     await saveSettings(this, this.pluginSettings);
+    this.reloadAutoScan();
 
     this.engine = new EngineClient({
       pipePath: `\\\\.\\pipe\\omni-collector-${process.pid}`,
@@ -47,12 +48,19 @@ export default class OmniCollectorPlugin extends Plugin {
     this.registerView(VIEW_TYPE_OMNI_LIST, (leaf) => {
       const source: ListDataSource = {
         list: () => this.engine.listCollections(),
+        listLocalFiles: () => this.engine.listLocalFiles(),
         onOpenDetail: (id) => void this.openCollectionDetail(id),
         getDefaultViewMode: () => this.pluginSettings.viewMode,
         onOrganize: (id, state) => this.engine.setOrganizeState(id, state).then(() => undefined),
         onTag: (id, tag) => this.engine.addTag(id, tag).then(() => undefined),
         onTopic: (id, topic) => this.engine.addTopic(id, topic).then(() => undefined),
         onPriority: (id, priority) => this.engine.setPriority(id, priority).then(() => undefined),
+        onConvert: (id, to) => this.engine.convertCollection(id, to).then(() => undefined),
+        ensureCover: (url) => this.ensureCover(url),
+        openLocalFile: (filePath) => {
+          const file = this.app.vault.getAbstractFileByPath(filePath);
+          if (file) void this.app.workspace.getLeaf(false).openFile(file as import("obsidian").TFile);
+        },
       };
       return new OmniCollectionListView(leaf, source);
     });
@@ -64,6 +72,11 @@ export default class OmniCollectorPlugin extends Plugin {
         onPriority: (id, p) => this.engine.setPriority(id, p).then(() => undefined),
         onTag: (id, t) => this.engine.addTag(id, t).then(() => undefined),
         onTopic: (id, t) => this.engine.addTopic(id, t).then(() => undefined),
+        openLocalFile: (filePath) => {
+          const file = this.app.vault.getAbstractFileByPath(filePath);
+          if (file) void this.app.workspace.getLeaf(false).openFile(file as import("obsidian").TFile);
+        },
+        ensureCover: (url) => this.ensureCover(url),
       };
       return new OmniCollectionDetailView(leaf, source);
     });
@@ -146,8 +159,11 @@ export default class OmniCollectorPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.autoScanTimer = null;
     this.engine?.dispose();
   }
+
+  private autoScanTimer: number | null = null;
 
   async saveSettings(): Promise<void> {
     await saveSettings(this, this.pluginSettings);
@@ -160,6 +176,76 @@ export default class OmniCollectorPlugin extends Plugin {
     } catch (err) {
       new Notice(`规则更新失败：${(err as Error).message}`);
     }
+  }
+
+  /** 自动扫描定时器（设置变更后重载）。 */
+  reloadAutoScan(): void {
+    if (this.autoScanTimer !== null) {
+      window.clearInterval(this.autoScanTimer);
+      this.autoScanTimer = null;
+    }
+    if (this.pluginSettings.localAutoScan && this.pluginSettings.localFolders.length > 0) {
+      this.autoScanTimer = window.setInterval(() => {
+        void this.scanAllLocalFolders(true);
+      }, Math.max(1, this.pluginSettings.localAutoScanMinutes) * 60_000);
+    }
+  }
+
+  /** 扫描全部已配置目录。 */
+  async scanAllLocalFolders(silent = false): Promise<void> {
+    if (this.pluginSettings.localFolders.length === 0) {
+      if (!silent) new Notice("尚未加入本地目录（请到设置添加）");
+      return;
+    }
+    if (!silent) new Notice("正在扫描本地目录…");
+    let scanned = 0;
+    let indexed = 0;
+    let failed = 0;
+    for (const folder of this.pluginSettings.localFolders) {
+      try {
+        const res = await this.engine.scanFolder(folder);
+        const report = (res.payload?.report ?? {}) as { scanned?: number; indexed?: number; errors?: string[] };
+        scanned += report.scanned ?? 0;
+        indexed += report.indexed ?? 0;
+        failed += (report.errors ?? []).length;
+      } catch {
+        failed += 1;
+      }
+    }
+    if (!silent) new Notice(`扫描完成：${scanned} 个文件，索引 ${indexed} 个${failed > 0 ? `，${failed} 个失败` : ""}`);
+  }
+
+  /** 封面本地缓存：首次下载到 vault/.covers，之后走本地路径。 */
+  async ensureCover(url: string): Promise<string | null> {
+    if (!url) return null;
+    const coverDir = "Omni Collector/.covers";
+    const vault = this.app.vault;
+    if (!(await vault.adapter.exists(coverDir))) {
+      await vault.createFolder(coverDir).catch(() => {});
+    }
+    const ext = /\.(jpg|jpeg|png|webp|gif)(?:[?#]|$)/i.exec(url)?.[1] ?? "jpg";
+    const hash = await this.hashString(url);
+    const filePath = `${coverDir}/${hash}.${ext}`;
+    if (await vault.adapter.exists(filePath)) {
+      const f = vault.getAbstractFileByPath(filePath);
+      return f ? vault.getResourcePath(f as import("obsidian").TFile) : url;
+    }
+    try {
+      const res = await requestUrl({ url, method: "GET" });
+      if (res.status >= 200 && res.status < 300) {
+        await vault.adapter.writeBinary(filePath, res.arrayBuffer);
+        const f = vault.getAbstractFileByPath(filePath);
+        return f ? vault.getResourcePath(f as import("obsidian").TFile) : url;
+      }
+    } catch {
+      // 下载失败回退远程地址
+    }
+    return url;
+  }
+
+  private async hashString(s: string): Promise<string> {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+    return Array.from(new Uint8Array(buf)).slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
   }
 
   private get controller(): OmniController {

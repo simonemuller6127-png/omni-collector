@@ -78,7 +78,7 @@ export class BilibiliAdapter extends BaseAdapter {
     const folders = await this.getFavoriteFolders(ctx);
     if (folders.length === 0) return [];
     const mixinKey = await this.mixinKey(ctx);
-    const rawItems: Array<{ bvid: string; title: string; cover: string; fav_time: number; upper?: { name?: string } }> = [];
+    const rawItems: Array<{ bvid: string; title: string; cover: string; fav_time: number; upper?: { name?: string }; watchLater?: boolean }> = [];
     // 遍历全部收藏夹（上限 20 个），每个取前 5 页
     for (const folder of folders.slice(0, 20)) {
       for (let pn = 1; pn <= 5; pn += 1) {
@@ -108,6 +108,26 @@ export class BilibiliAdapter extends BaseAdapter {
         }
       }
     }
+    // 稍后再看列表（watch later）
+    try {
+      const wlParams = signParams({ pn: "1", ps: "50" }, mixinKey);
+      const wlRes = await ctx.request.get("https://api.bilibili.com/x/v2/medialist/watch/later/list", {
+        params: wlParams,
+        headers: { "User-Agent": UA },
+      });
+      const wl = (await wlRes.json()) as {
+        code: number;
+        data?: { list?: Array<{ bvid?: string; title?: string; pic?: string; upper?: { name?: string }; add_at?: number }> };
+      };
+      if (wl.code === 0) {
+        for (const m of wl.data?.list ?? []) {
+          if (!m.bvid) continue;
+          rawItems.push({ bvid: m.bvid, title: m.title ?? "", cover: m.pic ?? "", fav_time: m.add_at ?? 0, upper: m.upper, watchLater: true });
+        }
+      }
+    } catch {
+      // 稍后再看不可用时忽略
+    }
     const seen = new Set<string>();
     return rawItems
       .filter((m) => {
@@ -122,7 +142,7 @@ export class BilibiliAdapter extends BaseAdapter {
         author: m.upper?.name,
         coverUrl: m.cover,
         collectedAt: m.fav_time ? new Date(m.fav_time * 1000).toISOString() : undefined,
-        saveType: 'favorited' as const,
+        saveType: (m.watchLater ? "watch_later" : "favorited") as "favorited" | "watch_later",
         extra: { contentType: 'video' },
       }));
   }
@@ -148,7 +168,7 @@ export class BilibiliAdapter extends BaseAdapter {
     let comments: RawComment[] = [];
     if (aid) {
       const replyRes = await ctx.request.get(REPLY_URL, {
-        params: { type: "1", oid: String(aid), ps: "3", sort: "2" },
+        params: { type: "1", oid: String(aid), ps: "10", sort: "2" },
         headers: { "User-Agent": UA },
       });
       const reply = (await replyRes.json()) as {
