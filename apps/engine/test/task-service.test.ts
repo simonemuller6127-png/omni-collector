@@ -206,4 +206,33 @@ describe("TaskService (internal, fake provider)", () => {
       service.dispose();
     }
   });
+
+  it("TASK_ORGANIZE updates organize state and validates input", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv1", {
+        url: "https://x/1",
+        title: "T",
+      });
+      manager.close();
+
+      const h = service.handlers();
+      const bad = await h.TASK_ORGANIZE?.(makeMsg("TASK_ORGANIZE", { collection_id: col.id, organize_status: "nope" }));
+      expect(bad?.message_type).toBe("TASK_ERROR");
+      const ok = await h.TASK_ORGANIZE?.(makeMsg("TASK_ORGANIZE", { collection_id: col.id, organize_status: "organized" }));
+      expect(ok?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const updated = new CollectionRepository(verifier.getDb()).findById(col.id);
+      expect(updated?.organize_status).toBe("organized");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
 });

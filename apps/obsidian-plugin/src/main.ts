@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type OmniSettings } from "./settings.js";
 import { OmniSettingTab } from "./settings-tab.js";
 import { EngineClient } from "./comm/socket-client.js";
-import { OmniSidebarView, VIEW_TYPE_OMNI } from "./ui/sidebar.js";
+import { OmniSidebarView, VIEW_TYPE_OMNI, type OmniController } from "./ui/sidebar.js";
 import { OmniAiReviewView, VIEW_TYPE_OMNI_AI, type AiReviewSource } from "./ui/ai-review.js";
 import { OmniCollectionListView, VIEW_TYPE_OMNI_LIST, type ListDataSource } from "./ui/collection-list.js";
 import { MarkdownBuilder } from "./markdown/markdown-builder.js";
@@ -41,11 +41,11 @@ export default class OmniCollectorPlugin extends Plugin {
       nodeBin: this.pluginSettings.nodeBin || undefined,
     });
 
-    this.registerView(VIEW_TYPE_OMNI, (leaf) => new OmniSidebarView(leaf, this.engine));
+    this.registerView(VIEW_TYPE_OMNI, (leaf) => new OmniSidebarView(leaf, this.engine, this.controller));
     this.registerView(VIEW_TYPE_OMNI_LIST, (leaf) => {
       const source: ListDataSource = {
         list: () => this.engine.listCollections(),
-        onOrganize: () => Promise.resolve(),
+        onOrganize: (id, state) => this.engine.setOrganizeState(id, state).then(() => undefined),
       };
       return new OmniCollectionListView(leaf, source);
     });
@@ -126,6 +126,33 @@ export default class OmniCollectorPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await saveSettings(this, this.pluginSettings);
+  }
+
+  private get controller(): OmniController {
+    return {
+      openCollectionList: () => this.openCollectionList(),
+      openAiReview: () => this.openAiReviewView(),
+      openSettings: () => this.openSettingsTab(),
+      startEngine: async () => {
+        await this.engine.startEngine("query");
+      },
+      syncAll: () => this.syncAllAndRender(),
+      syncPlatform: async (platform) => {
+        const res = await this.engine.syncPlatform(platform, "catalog");
+        const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number };
+        if (report.status === "success") {
+          new Notice(`Omni Collector: ${platform} 同步完成（+${report.itemsAdded ?? 0} 新增 / ${report.itemsUpdated ?? 0} 更新）`);
+        } else {
+          new Notice(`Omni Collector: ${platform} 同步失败 ${String(res.payload?.message ?? "")}`);
+        }
+      },
+      generateMarkdown: () => this.generateCollectionMarkdown(),
+      runGroupRecognition: async () => {
+        const res = await this.engine.runAutoGroup();
+        const candidates = (res.payload?.candidates ?? []) as Array<{ name: string; size: number; reason: string }>;
+        new Notice(`分组识别完成：发现 ${candidates.length} 个候选（请到 AI 建议审核确认）`);
+      },
+    };
   }
 
   updateEngineNodeBin(): void {
@@ -211,5 +238,11 @@ export default class OmniCollectorPlugin extends Plugin {
       if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_AI, active: true });
     }
     if (leaf) workspace.revealLeaf(leaf);
+  }
+
+  private async openSettingsTab(): Promise<void> {
+    const app = this.app as unknown as { setting: { open(): void; openTabById(id: string): void } };
+    app.setting.open();
+    app.setting.openTabById("omni-collector");
   }
 }

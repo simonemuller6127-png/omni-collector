@@ -189,6 +189,30 @@ export class EngineClient {
     });
   }
 
+  /** 更新收藏整理状态。 */
+  async setOrganizeState(
+    collectionId: string,
+    organizeStatus: "unorganized" | "viewed" | "organized" | "archived",
+  ): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_ORGANIZE",
+      payload: { collection_id: collectionId, organize_status: organizeStatus },
+    });
+  }
+
+  /** 查询各平台收藏数与上次同步时间。 */
+  async listPlatformStatus(): Promise<Array<{ platform: string; count: number; lastSyncAt: string | null }>> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "STATUS_QUERY",
+      payload: { scope: "platforms" },
+    });
+    return (res.payload?.platforms as Array<{ platform: string; count: number; lastSyncAt: string | null }>) ?? [];
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }

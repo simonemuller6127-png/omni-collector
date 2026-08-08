@@ -72,6 +72,7 @@ export class TaskService {
       TASK_SYNC: (msg) => this.sync(msg),
       TASK_AI: (msg) => this.ai(msg),
       TASK_GROUP: (msg) => this.group(msg),
+      TASK_ORGANIZE: (msg) => this.organize(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
@@ -203,9 +204,47 @@ export class TaskService {
         const groups = new ContentGroupRepository(this.db);
         return complete(msg.request_id, { task: "status_query", scope, groups: groups.listGroups() });
       }
+      if (scope === "platforms") {
+        const counts = this.db
+          .prepare(
+            "SELECT platform, COUNT(*) AS count FROM collections WHERE content_status='active' GROUP BY platform",
+          )
+          .all() as Array<{ platform: string; count: number }>;
+        const lastSyncs = this.db
+          .prepare(
+            "SELECT adapter, MAX(finished_at) AS last_at FROM sync_log WHERE status='success' GROUP BY adapter",
+          )
+          .all() as Array<{ adapter: string; last_at: string }>;
+        const byLast = new Map(lastSyncs.map((l) => [l.adapter, l.last_at]));
+        const byCount = new Map(counts.map((c) => [c.platform, c.count]));
+        const platforms = ["bilibili", "youtube", "xiaohongshu", "makerworld", "xiaoheihe"].map(
+          (platform) => ({
+            platform,
+            count: byCount.get(platform) ?? 0,
+            lastSyncAt: byLast.get(platform) ?? null,
+          }),
+        );
+        return complete(msg.request_id, { task: "status_query", scope, platforms });
+      }
       return complete(msg.request_id, { task: "status_query", scope, ok: true });
     } catch (err) {
       return error(msg.request_id, "QUERY_001", `QUERY_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 更新收藏整理状态（用户整理流转：未整理 -> 已查看 -> 已整理 -> 已归档）。 */
+  async organize(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const status = String(msg.payload.organize_status ?? "");
+    const valid = ["unorganized", "viewed", "organized", "archived"];
+    if (!collectionId || !valid.includes(status)) {
+      return error(msg.request_id, "ORG_001", "ORG_001: invalid collection_id or organize_status");
+    }
+    try {
+      new CollectionRepository(this.db).setOrganizeState(collectionId, status as "unorganized" | "viewed" | "organized" | "archived");
+      return complete(msg.request_id, { task: "organize", collection_id: collectionId, organize_status: status });
+    } catch (err) {
+      return error(msg.request_id, "ORG_001", `ORG_001: ${(err as Error).message}`);
     }
   }
 

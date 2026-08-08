@@ -1,10 +1,200 @@
-/* Omni Collector 插件样式（骨架） */
-.omni-title {
-  font-weight: 600;
-  padding: 8px 4px 4px;
+/* Omni Collector 插件样式 */
+
+.omni-panel,
+.omni-list-view {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.omni-status {
-  padding: 4px;
+
+.omni-panel-title {
+  font-weight: 700;
+  font-size: 1.15em;
+  margin-bottom: 4px;
+}
+
+.omni-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  font-size: 0.9em;
+}
+
+.omni-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+.omni-dot-unknown { background: var(--text-muted); }
+.omni-dot-ready { background: #4caf50; }
+.omni-dot-closing { background: #ff9800; }
+.omni-dot-error { background: #f44336; }
+
+.omni-status-text {
+  flex: 1;
+  color: var(--text-normal);
+}
+
+.omni-section-title {
+  font-weight: 600;
+  margin-top: 8px;
   color: var(--text-muted);
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.omni-btn {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: 0.9em;
+}
+.omni-btn:hover { background: var(--background-modifier-hover); }
+.omni-btn-primary {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+.omni-btn-primary:hover { opacity: 0.9; }
+.omni-btn-sm { font-size: 0.85em; padding: 4px 8px; }
+.omni-btn-disabled { opacity: 0.5; pointer-events: none; }
+
+.omni-platform-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.omni-platform-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.omni-platform-meta {
+  color: var(--text-muted);
+  font-size: 0.8em;
+}
+
+.omni-btn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.omni-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.omni-chip {
+  padding: 4px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.82em;
+}
+.omni-chip-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: transparent;
+}
+
+.omni-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  flex: 1;
+}
+.omni-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+}
+.omni-row-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.omni-title {
+  font-size: 0.92em;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.omni-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.omni-badge {
+  font-size: 0.72em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+.omni-badge-platform { background: var(--interactive-accent); color: var(--text-on-accent); }
+.omni-badge-priority { background: #ffd54f33; color: #c7a000; }
+.omni-badge-group { background: #64b5f633; color: #4d9fd6; }
+.omni-meta-text { font-size: 0.75em; color: var(--text-faint); }
+.omni-act {
+  flex: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  cursor: pointer;
+  font-size: 0.8em;
+}
+.omni-act:hover { background: var(--background-modifier-hover); }
+
+.omni-empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 24px 8px;
+  font-size: 0.9em;
+}
+
+.omni-ai-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+.omni-ai-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+}
+.omni-ai-payload {
+  flex: 1;
   font-size: 0.9em;
 }
