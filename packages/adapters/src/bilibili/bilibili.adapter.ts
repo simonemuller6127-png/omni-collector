@@ -17,6 +17,19 @@ const FAV_LIST_URL = "https://api.bilibili.com/x/v3/fav/resource/list";
 const VIEW_URL = "https://api.bilibili.com/x/web-interface/view";
 const REPLY_URL = "https://api.bilibili.com/x/v2/reply";
 
+/** 从视频详情中提取合集（ugc_season）归属。 */
+export function extractUgcSeason(json: unknown): { id: number; title: string; seasonId: number; epCount: number } | null {
+  const data = (json as { data?: { ugc_season?: { id?: number; title?: string; season_id?: number; ep_count?: number } } })?.data;
+  const ugc = data?.ugc_season;
+  if (!ugc || !ugc.title) return null;
+  return {
+    id: ugc.id ?? 0,
+    title: ugc.title,
+    seasonId: ugc.season_id ?? 0,
+    epCount: ugc.ep_count ?? 0,
+  };
+}
+
 interface FavoriteFolder {
   id: number;
   title: string;
@@ -142,8 +155,11 @@ export class BilibiliAdapter extends BaseAdapter {
         }));
       }
     }
+    const ugc = extractUgcSeason(view);
+    const baseDesc = view.data?.desc ?? "";
+    const description = ugc ? `所属合集：${ugc.title}（共 ${ugc.epCount} 集）\n${baseDesc}` : baseDesc;
     return {
-      description: view.data?.desc,
+      description,
       transcript: undefined,
       comments,
       publishedAt: view.data?.pubdate ? new Date(view.data.pubdate * 1000).toISOString() : undefined,

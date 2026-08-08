@@ -70,7 +70,7 @@ const EXTERNAL = {
 for (const [name, paths] of Object.entries(EXTERNAL)) {
   const real = packageRoot(name, paths);
   const dest = path.join(engineDir, "node_modules", name);
-  fs.symlinkSync(real, dest, "junction");
+  if (!fs.existsSync(dest)) fs.symlinkSync(real, dest, "junction");
   console.log(`[deploy] ${name} -> ${real}`);
 }
 fs.cpSync(path.join(ROOT, "packages/database/migrations"), path.join(engineDir, "migrations"), { recursive: true });

@@ -11,6 +11,7 @@ export type {
   HealthMetric,
 } from "./base-adapter.js";
 export { BilibiliAdapter } from "./bilibili/bilibili.adapter.js";
+export { extractUgcSeason } from "./bilibili/bilibili.adapter.js";
 export { getMixinKey, signParams } from "./bilibili/wbi.js";
 export { YouTubeAdapter, extractYoutubeId } from "./youtube/youtube.adapter.js";
 export { XiaohongshuAdapter, extractXiaohongshuId } from "./xiaohongshu/xiaohongshu.adapter.js";

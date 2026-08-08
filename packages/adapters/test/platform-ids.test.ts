@@ -5,6 +5,7 @@ import {
   extractMakerWorldId,
   extractXiaoheiheId,
   extractXiaoheiheLinkId,
+  extractUgcSeason,
   YouTubeAdapter,
   XiaohongshuAdapter,
   MakerWorldAdapter,
@@ -65,5 +66,21 @@ describe("adapter normalize mapping", () => {
       { platformItemId: "2", url: "https://xiaoheihe.cn/game/2", title: "G", saveType: "favorited" },
     );
     expect(xhh.contentType).toBe("post");
+  });
+});
+
+describe("extractUgcSeason", () => {
+  it("extracts series info from bilibili view detail", () => {
+    const json = {
+      data: {
+        ugc_season: { id: 123, title: "RIG系列", season_id: 456, ep_count: 10 },
+      },
+    };
+    expect(extractUgcSeason(json)).toMatchObject({ title: "RIG系列", epCount: 10 });
+  });
+
+  it("returns null when no ugc_season", () => {
+    expect(extractUgcSeason({ data: {} })).toBeNull();
+    expect(extractUgcSeason(null)).toBeNull();
   });
 });
