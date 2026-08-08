@@ -33,9 +33,10 @@ function embedUrl(item: CollectionDTO): string | null {
 }
 
 export class OmniCollectionDetailView extends ItemView {
+  private currentId = "";
+
   constructor(
     leaf: WorkspaceLeaf,
-    private readonly collectionId: string,
     private readonly source: DetailDataSource,
   ) {
     super(leaf);
@@ -49,11 +50,29 @@ export class OmniCollectionDetailView extends ItemView {
     return "Omni Collector 内容预览";
   }
 
+  getState(): Record<string, unknown> {
+    return { collectionId: this.currentId };
+  }
+
+  async setState(state: Record<string, unknown>): Promise<void> {
+    this.currentId = (state.collectionId as string) ?? "";
+    await this.renderContent();
+  }
+
   async onOpen(): Promise<void> {
+    this.currentId = (this.getState().collectionId as string) ?? "";
+    await this.renderContent();
+  }
+
+  private async renderContent(): Promise<void> {
     const container = this.containerEl.children[1];
     container.empty();
     container.addClass("omni-detail");
-    const item = await this.source.get(this.collectionId);
+    if (!this.currentId) {
+      container.createEl("div", { text: "未选择收藏", cls: "omni-empty" });
+      return;
+    }
+    const item = await this.source.get(this.currentId);
     if (!item) {
       container.createEl("div", { text: "收藏不存在", cls: "omni-empty" });
       return;
@@ -109,6 +128,16 @@ export class OmniCollectionDetailView extends ItemView {
         const row = comments.createEl("div", { cls: "omni-comment" });
         row.createEl("span", { text: c.author, cls: "omni-comment-author" });
         row.createEl("span", { text: c.content, cls: "omni-comment-content" });
+      }
+    }
+
+    // 本地关联文件
+    if ((item.linkedFiles ?? []).length > 0) {
+      container.createEl("div", { text: "本地文件", cls: "omni-section-title" });
+      const files = container.createEl("div", { cls: "omni-detail-files" });
+      for (const f of item.linkedFiles ?? []) {
+        const name = f.split(/[\\/]/).pop() ?? f;
+        files.createEl("div", { text: `📄 ${name}`, cls: "omni-file-row", attr: { title: f } });
       }
     }
 

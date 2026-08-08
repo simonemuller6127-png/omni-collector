@@ -6,6 +6,7 @@ import {
   CollectionRepository,
   CommentRepository,
   ContentGroupRepository,
+  FileRepository,
   MigrationManager,
   RuleCenter,
   TagRepository,
@@ -14,6 +15,7 @@ import {
 import type { CollectionDTO } from "@omni/shared-core";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
 import { ContentGroupService } from "../group/content-group-service.js";
+import { FileIndexer } from "../fileindex/file-indexer.js";
 import { SyncRunner } from "../sync/sync-runner.js";
 import type { SyncMode } from "../sync/sync-pipeline.js";
 import type { CommHandler } from "./comm-server.js";
@@ -77,6 +79,7 @@ export class TaskService {
       TASK_TAG: (msg) => this.tag(msg),
       TASK_TOPIC: (msg) => this.topic(msg),
       TASK_PRIORITY: (msg) => this.priority(msg),
+      TASK_INDEX: (msg) => this.index(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
@@ -247,6 +250,9 @@ export class TaskService {
           .getByCollection(id)
           .slice(0, 3)
           .map((c) => ({ author: c.author ?? "", content: c.content }));
+        const linkedFiles = (this.db
+          .prepare("SELECT file_path FROM local_files WHERE linked_collection_id = ? ORDER BY modified_at DESC")
+          .all(id) as Array<{ file_path: string }>).map((f) => f.file_path);
         const group = groups.groupOfCollection(col.id);
         const dto: CollectionDTO = {
           id: col.id,
@@ -271,6 +277,7 @@ export class TaskService {
           tags: tagRepo.listTagsOfCollection(col.id).map((t) => t.name),
           topics: topicRepo.listTopicsOfCollection(col.id).map((t) => t.name),
           comments,
+          linkedFiles,
         };
         return complete(msg.request_id, { task: "status_query", scope, collection: dto });
       }
@@ -344,6 +351,21 @@ export class TaskService {
       return complete(msg.request_id, { task: "priority", collection_id: collectionId, priority });
     } catch (err) {
       return error(msg.request_id, "PRI_001", `PRI_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 本地文件索引：扫描 Markdown/PDF，按 OMNI_SYSTEM url 关联到收藏。 */
+  async index(msg: OmniMessage): Promise<OmniMessage> {
+    const folder = String(msg.payload.folder ?? "");
+    if (!folder) return error(msg.request_id, "IDX_001", "IDX_001: missing folder");
+    try {
+      const files = new FileRepository(this.db);
+      const collections = new CollectionRepository(this.db);
+      const indexer = new FileIndexer(files, (url) => collections.findByUrl(url)?.id);
+      const report = indexer.scan(folder, true);
+      return complete(msg.request_id, { task: "index", folder, report });
+    } catch (err) {
+      return error(msg.request_id, "IDX_001", `IDX_001: ${(err as Error).message}`);
     }
   }
 

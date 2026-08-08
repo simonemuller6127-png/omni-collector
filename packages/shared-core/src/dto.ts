@@ -23,6 +23,7 @@ export interface CollectionDTO {
   tags?: string[];
   topics?: string[];
   comments?: Array<{ author: string; content: string }>;
+  linkedFiles?: string[];
 }
 
 export interface UserZone {

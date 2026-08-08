@@ -1,5 +1,5 @@
 import path from "node:path";
-import { Plugin, Notice, WorkspaceLeaf } from "obsidian";
+import { Modal, Notice, Plugin, Setting, WorkspaceLeaf } from "obsidian";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type OmniSettings } from "./settings.js";
 import { OmniSettingTab } from "./settings-tab.js";
@@ -57,7 +57,6 @@ export default class OmniCollectorPlugin extends Plugin {
       return new OmniCollectionListView(leaf, source);
     });
     this.registerView(VIEW_TYPE_OMNI_DETAIL, (leaf) => {
-      const state = leaf.getViewState().state as { collectionId?: string };
       const source: DetailDataSource = {
         get: (id) => this.engine.getCollection(id),
         onOrganize: (id, s) => this.engine.setOrganizeState(id, s).then(() => undefined),
@@ -65,7 +64,7 @@ export default class OmniCollectorPlugin extends Plugin {
         onTag: (id, t) => this.engine.addTag(id, t).then(() => undefined),
         onTopic: (id, t) => this.engine.addTopic(id, t).then(() => undefined),
       };
-      return new OmniCollectionDetailView(leaf, state.collectionId ?? "", source);
+      return new OmniCollectionDetailView(leaf, source);
     });
     this.registerView(VIEW_TYPE_OMNI_AI, (leaf) => {
       const source: AiReviewSource = {
@@ -114,6 +113,13 @@ export default class OmniCollectorPlugin extends Plugin {
       name: "打开收藏列表",
       callback: () => {
         void this.openCollectionList();
+      },
+    });
+    this.addCommand({
+      id: "scan-local-files",
+      name: "扫描本地文件并关联收藏",
+      callback: () => {
+        void this.scanLocalFiles();
       },
     });
     this.addRibbonIcon("sparkles", "Omni Collector", () => {
@@ -185,6 +191,7 @@ export default class OmniCollectorPlugin extends Plugin {
         const candidates = (res.payload?.candidates ?? []) as Array<{ name: string; size: number; reason: string }>;
         new Notice(`分组识别完成：发现 ${candidates.length} 个候选（请到 AI 建议审核确认）`);
       },
+      scanLocalFiles: () => this.scanLocalFiles(),
     };
   }
 
@@ -304,5 +311,37 @@ export default class OmniCollectorPlugin extends Plugin {
     const app = this.app as unknown as { setting: { open(): void; openTabById(id: string): void } };
     app.setting.open();
     app.setting.openTabById("omni-collector");
+  }
+
+  /** 扫描库内文件夹（默认 Omni Collector），把 Markdown/PDF 关联到收藏。 */
+  private async scanLocalFiles(): Promise<void> {
+    const vaultPath = (this.app.vault.adapter as unknown as { getBasePath(): string }).getBasePath();
+    const defaultFolder = `${vaultPath}/Omni Collector`;
+    const modal = new Modal(this.app);
+    modal.titleEl.setText("扫描本地文件");
+    let folder = defaultFolder;
+    new Setting(modal.contentEl)
+      .setName("文件夹路径")
+      .setDesc("扫描该目录下的 .md / .pdf，并按 Markdown 系统区 URL 关联收藏。")
+      .addText((text) =>
+        text.setValue(defaultFolder).onChange((v) => {
+          folder = v;
+        }),
+      );
+    modal.contentEl.createEl("button", { text: "开始扫描", cls: "omni-btn omni-btn-primary" }).addEventListener("click", () => {
+      modal.close();
+      void (async () => {
+        new Notice("正在扫描本地文件…");
+        try {
+          const res = await this.engine.scanFolder(folder);
+          const report = (res.payload?.report ?? {}) as { scanned?: number; indexed?: number; errors?: string[] };
+          const errors = report.errors ?? [];
+          new Notice(`扫描完成：共 ${report.scanned ?? 0} 个文件，索引 ${report.indexed ?? 0} 个${errors.length > 0 ? `，${errors.length} 个失败` : ""}`);
+        } catch (err) {
+          new Notice(`扫描失败：${(err as Error).message}`);
+        }
+      })();
+    });
+    modal.open();
   }
 }

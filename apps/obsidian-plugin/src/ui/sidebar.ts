@@ -14,6 +14,7 @@ export interface OmniController {
   syncPlatform(platform: string): Promise<void>;
   generateMarkdown(): Promise<void>;
   runGroupRecognition(): Promise<void>;
+  scanLocalFiles(): Promise<void>;
 }
 
 const PLATFORMS: Array<{ key: string; label: string }> = [
@@ -114,6 +115,7 @@ export class OmniSidebarView extends ItemView {
     this.addActionButton(contentRow, "生成 Markdown", () => this.withBusy(async () => { await this.ctrl.generateMarkdown(); }));
     this.addActionButton(contentRow, "分组识别", () => this.withBusy(async () => { await this.ctrl.runGroupRecognition(); }));
     this.addActionButton(contentRow, "AI 建议审核", () => this.ctrl.openAiReview());
+    this.addActionButton(contentRow, "扫描本地文件", () => this.withBusy(async () => { await this.ctrl.scanLocalFiles(); }));
 
     container
       .createEl("button", { text: "打开设置", cls: "omni-btn" })

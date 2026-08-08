@@ -316,6 +316,19 @@
   margin-top: 4px;
 }
 
+.omni-detail-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.omni-file-row {
+  font-size: 0.85em;
+  padding: 4px 8px;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  color: var(--text-normal);
+}
+
 .omni-ai-list {
   display: flex;
   flex-direction: column;

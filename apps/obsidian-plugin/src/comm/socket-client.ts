@@ -341,6 +341,16 @@ export class EngineClient {
     });
   }
 
+  /** 扫描本地文件夹（Markdown/PDF）并关联收藏。 */
+  async scanFolder(folder: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_INDEX",
+      payload: { folder },
+    });
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }
