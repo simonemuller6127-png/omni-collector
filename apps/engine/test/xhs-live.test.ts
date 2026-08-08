@@ -16,7 +16,7 @@ const cookieJson = (() => {
   }
 })();
 
-describe.skipIf(!cookieJson)("XiaohongshuAdapter (live, encrypted cookies)", () => {
+describe.skipIf(!cookieJson || process.env.OMNI_RUN_LIVE !== "1")("XiaohongshuAdapter (live, encrypted cookies)", () => {
   it(
     "validates session and pulls favorites with detail",
     async (tctx) => {

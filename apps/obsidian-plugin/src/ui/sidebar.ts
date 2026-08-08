@@ -5,9 +5,11 @@ export const VIEW_TYPE_OMNI = "omni-collector-view";
 
 export interface OmniController {
   openCollectionList(platform?: string): Promise<void>;
+  openCollectionDetail(collectionId: string): Promise<void>;
   openAiReview(): Promise<void>;
   openSettings(): Promise<void>;
   startEngine(): Promise<void>;
+  stopEngine(): Promise<void>;
   syncAll(): Promise<void>;
   syncPlatform(platform: string): Promise<void>;
   generateMarkdown(): Promise<void>;
@@ -66,6 +68,13 @@ export class OmniSidebarView extends ItemView {
       void this.withBusy(async () => {
         await this.ctrl.startEngine();
         await this.refreshStatus();
+      });
+    });
+    const stopBtn = statusRow.createEl("button", { text: "停止引擎", cls: "omni-btn omni-btn-sm omni-btn-ghost" });
+    stopBtn.addEventListener("click", () => {
+      void this.withBusy(async () => {
+        await this.ctrl.stopEngine();
+        this.setStatus(false);
       });
     });
     this.totalEl = container.createEl("div", { cls: "omni-total" });

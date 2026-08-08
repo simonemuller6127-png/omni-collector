@@ -7,6 +7,7 @@ import { EngineClient } from "./comm/socket-client.js";
 import { OmniSidebarView, VIEW_TYPE_OMNI, type OmniController } from "./ui/sidebar.js";
 import { OmniAiReviewView, VIEW_TYPE_OMNI_AI, type AiReviewSource } from "./ui/ai-review.js";
 import { OmniCollectionListView, VIEW_TYPE_OMNI_LIST, type ListDataSource } from "./ui/collection-list.js";
+import { OmniCollectionDetailView, VIEW_TYPE_OMNI_DETAIL, type DetailDataSource } from "./ui/collection-detail.js";
 import { MarkdownBuilder } from "./markdown/markdown-builder.js";
 
 export default class OmniCollectorPlugin extends Plugin {
@@ -39,18 +40,32 @@ export default class OmniCollectorPlugin extends Plugin {
       engineScript: this.pluginSettings.engineScript,
       dataDir: this.pluginSettings.dataDir,
       nodeBin: this.pluginSettings.nodeBin || undefined,
+      autoStart: this.pluginSettings.autoStartEngine,
     });
 
     this.registerView(VIEW_TYPE_OMNI, (leaf) => new OmniSidebarView(leaf, this.engine, this.controller));
     this.registerView(VIEW_TYPE_OMNI_LIST, (leaf) => {
       const source: ListDataSource = {
         list: () => this.engine.listCollections(),
+        onOpenDetail: (id) => void this.openCollectionDetail(id),
+        getDefaultViewMode: () => this.pluginSettings.viewMode,
         onOrganize: (id, state) => this.engine.setOrganizeState(id, state).then(() => undefined),
         onTag: (id, tag) => this.engine.addTag(id, tag).then(() => undefined),
         onTopic: (id, topic) => this.engine.addTopic(id, topic).then(() => undefined),
         onPriority: (id, priority) => this.engine.setPriority(id, priority).then(() => undefined),
       };
       return new OmniCollectionListView(leaf, source);
+    });
+    this.registerView(VIEW_TYPE_OMNI_DETAIL, (leaf) => {
+      const state = leaf.getViewState().state as { collectionId?: string };
+      const source: DetailDataSource = {
+        get: (id) => this.engine.getCollection(id),
+        onOrganize: (id, s) => this.engine.setOrganizeState(id, s).then(() => undefined),
+        onPriority: (id, p) => this.engine.setPriority(id, p).then(() => undefined),
+        onTag: (id, t) => this.engine.addTag(id, t).then(() => undefined),
+        onTopic: (id, t) => this.engine.addTopic(id, t).then(() => undefined),
+      };
+      return new OmniCollectionDetailView(leaf, state.collectionId ?? "", source);
     });
     this.registerView(VIEW_TYPE_OMNI_AI, (leaf) => {
       const source: AiReviewSource = {
@@ -143,11 +158,16 @@ export default class OmniCollectorPlugin extends Plugin {
   private get controller(): OmniController {
     return {
       openCollectionList: (platform?: string) => this.openCollectionList(platform),
+      openCollectionDetail: (id: string) => this.openCollectionDetail(id),
       openAiReview: () => this.openAiReviewView(),
       openSettings: () => this.openSettingsTab(),
       startEngine: async () => {
         await this.engine.startEngine("query");
         new Notice("Engine 已启动");
+      },
+      stopEngine: async () => {
+        await this.engine.stopEngine("plugin");
+        new Notice("Engine 已停止");
       },
       syncAll: () => this.syncAllAndRender(),
       syncPlatform: async (platform) => {
@@ -177,6 +197,19 @@ export default class OmniCollectorPlugin extends Plugin {
       engineScript: this.pluginSettings.engineScript,
       dataDir: this.pluginSettings.dataDir,
       nodeBin: this.pluginSettings.nodeBin || undefined,
+    });
+  }
+
+  updateEngineAutoStart(): void {
+    if (!this.engine) return;
+    this.engine.dispose();
+    this.engine = new EngineClient({
+      pipePath: `\\\\.\\pipe\\omni-collector-${process.pid}`,
+      wsUrl: `ws://127.0.0.1:0/?token=${this.pluginSettings.wsToken}`,
+      engineScript: this.pluginSettings.engineScript,
+      dataDir: this.pluginSettings.dataDir,
+      nodeBin: this.pluginSettings.nodeBin || undefined,
+      autoStart: this.pluginSettings.autoStartEngine,
     });
   }
 
@@ -241,6 +274,18 @@ export default class OmniCollectorPlugin extends Plugin {
       if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_LIST, active: true, state: { platform: platform ?? null } });
     } else {
       await leaf.setViewState({ type: VIEW_TYPE_OMNI_LIST, active: true, state: { platform: platform ?? null } });
+    }
+    if (leaf) workspace.revealLeaf(leaf);
+  }
+
+  private async openCollectionDetail(collectionId: string): Promise<void> {
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(VIEW_TYPE_OMNI_DETAIL)[0] ?? null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_DETAIL, active: true, state: { collectionId } });
+    } else {
+      await leaf.setViewState({ type: VIEW_TYPE_OMNI_DETAIL, active: true, state: { collectionId } });
     }
     if (leaf) workspace.revealLeaf(leaf);
   }

@@ -13,7 +13,7 @@ const cookie = (() => {
   }
 })();
 
-describe.skipIf(!cookie)("BilibiliAdapter (live, real account)", () => {
+describe.skipIf(!cookie || process.env.OMNI_RUN_LIVE !== "1")("BilibiliAdapter (live, real account)", () => {
   it(
     "validates session, pulls >=10 catalog items and 3 details",
     async (tctx) => {

@@ -97,6 +97,16 @@ export class OmniSettingTab extends PluginSettingTab {
 
     containerEl.createEl("h3", { text: "Engine" });
     new Setting(containerEl)
+      .setName("自动启动 Engine")
+      .setDesc("请求收藏/同步时自动拉起 Engine；关闭后需手动点侧边栏「启动引擎」。")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.pluginSettings.autoStartEngine).onChange(async (value) => {
+          this.plugin.pluginSettings.autoStartEngine = value;
+          await this.plugin.saveSettings();
+          this.plugin.updateEngineAutoStart();
+        }),
+      );
+    new Setting(containerEl)
       .setName("Node.js 路径")
       .setDesc("Engine 子进程使用的 Node 可执行文件；留空则使用 PATH 中的 node（Windows 可填完整路径）。")
       .addText((text) =>

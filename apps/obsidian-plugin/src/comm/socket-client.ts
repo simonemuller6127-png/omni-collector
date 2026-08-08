@@ -15,6 +15,8 @@ export interface EngineClientOptions {
   dataDir: string;
   requestTimeoutMs?: number;
   spawnEngine?: () => ChildProcess;
+  /** 请求前自动拉起引擎（默认 true；设为 false 则需手动 startEngine）。 */
+  autoStart?: boolean;
 }
 
 /**
@@ -30,10 +32,12 @@ export class EngineClient {
   private wsUrl: string;
   private started = false;
   private starting?: Promise<void>;
+  private readonly autoStart: boolean;
 
   constructor(private readonly opts: EngineClientOptions) {
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 30_000;
     this.wsUrl = opts.wsUrl;
+    this.autoStart = opts.autoStart ?? true;
   }
 
   async startEngine(taskKind: string): Promise<void> {
@@ -140,7 +144,7 @@ export class EngineClient {
   }
 
   request(msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string }): Promise<OmniMessage> {
-    if (!this.started && msg.message_type !== "ENGINE_START") {
+    if (!this.started && msg.message_type !== "ENGINE_START" && this.autoStart) {
       return this.ensureStarted().then(() => this.requestRaw(msg));
     }
     return this.requestRaw(msg);
@@ -294,6 +298,17 @@ export class EngineClient {
       payload: { scope: "platforms" },
     });
     return (res.payload?.platforms as Array<{ platform: string; count: number; lastSyncAt: string | null }>) ?? [];
+  }
+
+  /** 查询单条收藏详情（含评论）。 */
+  async getCollection(collectionId: string): Promise<import("@omni/shared-core").CollectionDTO | null> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "STATUS_QUERY",
+      payload: { scope: "collection", id: collectionId },
+    });
+    return (res.payload?.collection as import("@omni/shared-core").CollectionDTO) ?? null;
   }
 
   /** 用户手动给收藏打 Tag。 */

@@ -22,6 +22,7 @@ export interface CollectionDTO {
   groupName?: string;
   tags?: string[];
   topics?: string[];
+  comments?: Array<{ author: string; content: string }>;
 }
 
 export interface UserZone {

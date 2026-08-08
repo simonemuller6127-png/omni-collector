@@ -1,12 +1,35 @@
-import { ItemView, WorkspaceLeaf } from "obsidian";
+import { ItemView, Modal, Notice, WorkspaceLeaf } from "obsidian";
 import type { CollectionDTO } from "@omni/shared-core";
-import { nextOrganizeState } from "./helpers.js";
 
 export const VIEW_TYPE_OMNI_DETAIL = "omni-collector-detail";
 
 export interface DetailDataSource {
-  get(collectionId: string): Promise<CollectionDTO>;
+  get(collectionId: string): Promise<CollectionDTO | null>;
   onOrganize(collectionId: string, state: CollectionDTO["organizeStatus"]): Promise<void>;
+  onPriority(collectionId: string, priority: CollectionDTO["priority"]): Promise<void>;
+  onTag(collectionId: string, tag: string): Promise<void>;
+  onTopic(collectionId: string, topic: string): Promise<void>;
+}
+
+const PLATFORM_LABELS: Record<string, string> = {
+  bilibili: "B站",
+  youtube: "YouTube",
+  xiaohongshu: "小红书",
+  makerworld: "MakerWorld",
+  xiaoheihe: "小黑盒",
+};
+
+/** 平台官方可嵌入播放器（复用平台能力，不搬浏览器）。 */
+function embedUrl(item: CollectionDTO): string | null {
+  if (item.platform === "bilibili") {
+    const m = /(BV[0-9A-Za-z]+)/.exec(item.url);
+    return m ? `https://player.bilibili.com/player.html?bvid=${m[1]}&page=1` : null;
+  }
+  if (item.platform === "youtube") {
+    const m = /(?:v=|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})/.exec(item.url);
+    return m ? `https://www.youtube.com/embed/${m[1]}` : null;
+  }
+  return null;
 }
 
 export class OmniCollectionDetailView extends ItemView {
@@ -23,42 +46,119 @@ export class OmniCollectionDetailView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Omni Collector 详情";
+    return "Omni Collector 内容预览";
   }
 
   async onOpen(): Promise<void> {
     const container = this.containerEl.children[1];
     container.empty();
+    container.addClass("omni-detail");
     const item = await this.source.get(this.collectionId);
+    if (!item) {
+      container.createEl("div", { text: "收藏不存在", cls: "omni-empty" });
+      return;
+    }
 
-    const system = container.createEl("section", { cls: "omni-system" });
-    system.createEl("h3", { text: "系统信息（只读）" });
-    system.createEl("div", { text: `标题：${item.title}` });
-    system.createEl("div", { text: `平台：${item.platform}（${item.contentType}）` });
-    system.createEl("div", { text: `链接：${item.url}` });
-    system.createEl("div", { text: `同步状态：${item.syncStatus}` });
+    // 封面
+    if (item.coverUrl) {
+      container.createEl("img", { cls: "omni-detail-cover", attr: { src: item.coverUrl, referrerpolicy: "no-referrer" } });
+    }
 
-    const organize = container.createEl("section", { cls: "omni-organize" });
-    organize.createEl("h3", { text: "整理与优先级" });
-    const badge = organize.createEl("div", {
-      text: `整理：${item.organizeStatus} / 优先级：${item.priority}`,
-    });
-    organize
-      .createEl("button", { text: "推进整理状态", cls: "omni-act" })
-      .addEventListener("click", () => {
-        void this.source
-          .onOrganize(item.id, nextOrganizeState(item.organizeStatus))
-          .then(() => {
-            badge.setText(`整理：${nextOrganizeState(item.organizeStatus)} / 优先级：${item.priority}`);
-          });
+    // 标题 + 元信息
+    container.createEl("div", { text: item.title || item.platformItemId, cls: "omni-detail-title" });
+    const meta = container.createEl("div", { cls: "omni-row-meta" });
+    meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform" });
+    meta.createEl("span", { text: item.author ?? "未知作者", cls: "omni-badge" });
+    meta.createEl("span", { text: item.contentType === "video" ? "视频" : item.contentType, cls: "omni-badge" });
+    meta.createEl("span", { text: new Date(item.collectedAt).toLocaleDateString("zh-CN"), cls: "omni-meta-text" });
+
+    // 内嵌播放器（B站 / YouTube）
+    const embed = embedUrl(item);
+    if (embed) {
+      container.createEl("div", { cls: "omni-detail-player" }).createEl("iframe", {
+        attr: { src: embed, allow: "fullscreen; picture-in-picture; encrypted-media", allowfullscreen: "", style: "width:100%;aspect-ratio:16/9;border:0;border-radius:8px;" },
       });
+    } else {
+      container
+        .createEl("button", { text: "在浏览器打开原文", cls: "omni-btn omni-btn-primary" })
+        .addEventListener("click", () => {
+          void window.open(item.url, "_blank");
+        });
+    }
 
-    const user = container.createEl("section", { cls: "omni-user" });
-    user.createEl("h3", { text: "用户内容区（系统永不覆盖）" });
-    user.createEl("div", { text: "我的笔记 / 精选评论 / 评分与优先级 由用户在 Markdown 中维护（ADR-006）。" });
+    // 描述
+    if (item.description) {
+      container.createEl("div", { text: "简介", cls: "omni-section-title" });
+      container.createEl("div", { text: item.description, cls: "omni-detail-desc" });
+    }
+
+    // Tags / Topics
+    const chips = container.createEl("div", { cls: "omni-detail-chips" });
+    for (const t of item.tags ?? []) chips.createEl("span", { text: `#${t}`, cls: "omni-badge omni-badge-tag" });
+    for (const t of item.topics ?? []) chips.createEl("span", { text: `◎${t}`, cls: "omni-badge omni-badge-topic" });
+    const tagBtn = chips.createEl("button", { text: "＋Tag", cls: "omni-chip" });
+    tagBtn.addEventListener("click", () => this.promptText("打 Tag", "输入标签名", (v) => this.source.onTag(item.id, v)));
+    const topicBtn = chips.createEl("button", { text: "＋Topic", cls: "omni-chip" });
+    topicBtn.addEventListener("click", () => this.promptText("归入 Topic", "输入 Topic 名", (v) => this.source.onTopic(item.id, v)));
+
+    // 评论（已同步的）
+    if ((item.comments ?? []).length > 0) {
+      container.createEl("div", { text: "评论", cls: "omni-section-title" });
+      const comments = container.createEl("div", { cls: "omni-detail-comments" });
+      for (const c of item.comments ?? []) {
+        const row = comments.createEl("div", { cls: "omni-comment" });
+        row.createEl("span", { text: c.author, cls: "omni-comment-author" });
+        row.createEl("span", { text: c.content, cls: "omni-comment-content" });
+      }
+    }
+
+    // 整理操作
+    const actions = container.createEl("div", { cls: "omni-detail-actions" });
+    const orgBtn = actions.createEl("button", { text: `整理：${item.organizeStatus}（点击推进）`, cls: "omni-act" });
+    orgBtn.addEventListener("click", () => {
+      const next = item.organizeStatus === "unorganized" ? "viewed" : item.organizeStatus === "viewed" ? "organized" : "archived";
+      void this.source.onOrganize(item.id, next).then(() => {
+        item.organizeStatus = next;
+        orgBtn.setText(`整理：${next}（点击推进）`);
+      });
+    });
+    const priBtn = actions.createEl("button", { text: `优先级：${item.priority}`, cls: "omni-act omni-act-priority" });
+    priBtn.addEventListener("click", () => {
+      const order: CollectionDTO["priority"][] = ["normal", "important", "project", "knowledge"];
+      const next = order[(order.indexOf(item.priority) + 1) % order.length];
+      void this.source.onPriority(item.id, next).then(() => {
+        item.priority = next;
+        priBtn.setText(`优先级：${next}`);
+      });
+    });
   }
 
-  async onClose(): Promise<void> {
-    // 无额外清理
+  private promptText(title: string, placeholder: string, submit: (v: string) => Promise<void>): void {
+    const modal = new Modal(this.app);
+    modal.titleEl.setText(title);
+    const input = modal.contentEl.createEl("input", { type: "text", placeholder });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && input.value.trim()) {
+        void submit(input.value.trim())
+          .then(() => {
+            modal.close();
+            new Notice("已保存");
+          })
+          .catch((err) => new Notice(`保存失败：${(err as Error).message}`));
+      }
+    });
+    modal.contentEl.createEl("button", { text: "确定", cls: "omni-btn omni-btn-primary" }).addEventListener("click", () => {
+      if (input.value.trim()) {
+        void submit(input.value.trim())
+          .then(() => {
+            modal.close();
+            new Notice("已保存");
+          })
+          .catch((err) => new Notice(`保存失败：${(err as Error).message}`));
+      }
+    });
+    modal.open();
   }
+
+  async onClose(): Promise<void> {}
 }

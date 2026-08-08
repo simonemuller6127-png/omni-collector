@@ -21,6 +21,10 @@ export interface OmniSettings {
   aiModel: string;
   /** 初次/手动同步模式：catalog（轻量目录）| full（含详情）。 */
   initialSyncMode: "catalog" | "full";
+  /** 请求前自动拉起 Engine（默认 true；关闭后需手动点「启动引擎」）。 */
+  autoStartEngine: boolean;
+  /** 收藏列表默认视图：list（纯文字）| card（缩略图卡片）。 */
+  viewMode: "list" | "card";
 }
 
 export const DEFAULT_SETTINGS: OmniSettings = {
@@ -34,6 +38,8 @@ export const DEFAULT_SETTINGS: OmniSettings = {
   aiApiKey: "",
   aiModel: "",
   initialSyncMode: "catalog",
+  autoStartEngine: true,
+  viewMode: "list",
 };
 
 export async function loadSettings(plugin: Plugin): Promise<OmniSettings> {

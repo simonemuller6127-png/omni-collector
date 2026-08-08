@@ -20,7 +20,7 @@ afterAll(() => {
   for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
 });
 
-describe.skipIf(!hasBiliCookie)("SyncRunner (live, full pipeline into temp db)", () => {
+describe.skipIf(!hasBiliCookie || process.env.OMNI_RUN_LIVE !== "1")("SyncRunner (live, full pipeline into temp db)", () => {
   it(
     "runs bilibili catalog sync: browser session -> adapter -> sqlite",
     async (tctx) => {

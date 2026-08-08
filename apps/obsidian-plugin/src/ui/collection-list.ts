@@ -6,6 +6,8 @@ export const VIEW_TYPE_OMNI_LIST = "omni-collector-list";
 
 export interface ListDataSource {
   list(): Promise<CollectionDTO[]>;
+  onOpenDetail(collectionId: string): void;
+  getDefaultViewMode(): "list" | "card";
   onOrganize(collectionId: string, state: CollectionDTO["organizeStatus"]): Promise<void>;
   onTag(collectionId: string, tag: string): Promise<void>;
   onTopic(collectionId: string, topic: string): Promise<void>;
@@ -78,6 +80,7 @@ export class OmniCollectionListView extends ItemView {
   private statusFilter: "all" | "unorganized" | "organized" | "archived" = "all";
   private priorityFilter: "all" | CollectionDTO["priority"] = "all";
   private platformFilter: string | null = null;
+  private viewMode: "list" | "card" = "list";
   private listEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
   private totalEl!: HTMLElement;
@@ -109,6 +112,7 @@ export class OmniCollectionListView extends ItemView {
   async onOpen(): Promise<void> {
     const initial = (this.getState().platform as string | null) ?? null;
     this.platformFilter = initial;
+    this.viewMode = this.source.getDefaultViewMode();
     const container = this.containerEl.children[1];
     container.empty();
     container.addClass("omni-list-view");
@@ -168,6 +172,12 @@ export class OmniCollectionListView extends ItemView {
       .addEventListener("click", () => {
         void this.refreshList();
       });
+    tb.createEl("button", { text: this.viewMode === "list" ? "切换卡片视图" : "切换列表视图", cls: "omni-chip" })
+      .addEventListener("click", () => {
+        this.viewMode = this.viewMode === "list" ? "card" : "list";
+        this.renderToolbar();
+        void this.renderList();
+      });
   }
 
   private async refreshList(): Promise<void> {
@@ -196,10 +206,28 @@ export class OmniCollectionListView extends ItemView {
       this.listEl.createEl("div", { text: "暂无收藏（到侧边栏点「同步全部平台」）", cls: "omni-empty" });
       return;
     }
+    if (this.viewMode === "card") {
+      const grid = this.listEl.createEl("div", { cls: "omni-card-grid" });
+      for (const item of items) {
+        const card = grid.createEl("div", { cls: "omni-card" });
+        if (item.coverUrl) {
+          card.createEl("img", { cls: "omni-card-cover", attr: { src: item.coverUrl, referrerpolicy: "no-referrer", loading: "lazy" } });
+        } else {
+          card.createEl("div", { cls: "omni-card-cover omni-card-cover-empty" });
+        }
+        card.createEl("div", { text: item.title || item.platformItemId, cls: "omni-card-title" });
+        const meta = card.createEl("div", { cls: "omni-row-meta" });
+        meta.createEl("span", { text: PLATFORMS.find((p) => p.key === item.platform)?.label ?? item.platform, cls: "omni-badge omni-badge-platform" });
+        meta.createEl("span", { text: item.saveType === "liked" ? "点赞" : "收藏", cls: "omni-badge" });
+        card.addEventListener("click", () => this.source.onOpenDetail(item.id));
+      }
+      return;
+    }
     for (const item of items) {
       const row = this.listEl.createEl("div", { cls: "omni-row" });
       const main = row.createEl("div", { cls: "omni-row-main" });
       main.createEl("a", { text: item.title || item.platformItemId, href: item.url, cls: "omni-title" });
+      main.addEventListener("click", () => this.source.onOpenDetail(item.id));
       const meta = main.createEl("div", { cls: "omni-row-meta" });
       meta.createEl("span", { text: PLATFORMS.find((p) => p.key === item.platform)?.label ?? item.platform, cls: "omni-badge omni-badge-platform" });
       meta.createEl("span", { text: item.saveType === "liked" ? "点赞" : item.saveType === "watch_later" ? "稍后再看" : "收藏", cls: "omni-badge" });

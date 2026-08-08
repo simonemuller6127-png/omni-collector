@@ -4,6 +4,7 @@ import type { AIProvider } from "@omni/ai";
 import {
   AIRepository,
   CollectionRepository,
+  CommentRepository,
   ContentGroupRepository,
   MigrationManager,
   RuleCenter,
@@ -234,6 +235,44 @@ export class TaskService {
           }),
         );
         return complete(msg.request_id, { task: "status_query", scope, platforms });
+      }
+      if (scope === "collection") {
+        const id = String(msg.payload.id ?? "");
+        const col = new CollectionRepository(this.db).findById(id);
+        if (!col) return error(msg.request_id, "QUERY_001", "QUERY_001: collection not found");
+        const groups = new ContentGroupRepository(this.db);
+        const tagRepo = new TagRepository(this.db);
+        const topicRepo = new TopicRepository(this.db);
+        const comments = new CommentRepository(this.db)
+          .getByCollection(id)
+          .slice(0, 3)
+          .map((c) => ({ author: c.author ?? "", content: c.content }));
+        const group = groups.groupOfCollection(col.id);
+        const dto: CollectionDTO = {
+          id: col.id,
+          platform: col.platform,
+          platformItemId: col.platform_item_id,
+          url: col.url,
+          title: col.title ?? "",
+          author: col.author ?? undefined,
+          coverUrl: col.cover_url ?? undefined,
+          description: col.description ?? undefined,
+          contentType: col.content_type,
+          saveType: col.save_type,
+          contentStatus: col.content_status,
+          syncStatus: col.sync_status,
+          organizeStatus: col.organize_status,
+          priority: col.priority,
+          aiStatus: (col.ai_status as CollectionDTO["aiStatus"]) ?? undefined,
+          collectedAt: col.collected_at,
+          lastSyncedAt: col.last_synced_at ?? undefined,
+          groupId: group?.id,
+          groupName: group?.name,
+          tags: tagRepo.listTagsOfCollection(col.id).map((t) => t.name),
+          topics: topicRepo.listTopicsOfCollection(col.id).map((t) => t.name),
+          comments,
+        };
+        return complete(msg.request_id, { task: "status_query", scope, collection: dto });
       }
       return complete(msg.request_id, { task: "status_query", scope, ok: true });
     } catch (err) {

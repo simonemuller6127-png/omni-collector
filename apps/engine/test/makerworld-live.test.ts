@@ -6,7 +6,7 @@ import { BrowserSessionManager } from "../src/index.js";
 const DATA_DIR = "D:/Github/My_Project/omni-collection/data";
 const hasProfile = fs.existsSync(`${DATA_DIR}/browser-profiles/makerworld`);
 
-describe.skipIf(!hasProfile)("MakerWorldAdapter (live, persistent profile)", () => {
+describe.skipIf(!hasProfile || process.env.OMNI_RUN_LIVE !== "1")("MakerWorldAdapter (live, persistent profile)", () => {
   it(
     "validates session and pulls favorited models with detail",
     async () => {
