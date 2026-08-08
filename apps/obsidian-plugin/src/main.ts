@@ -46,6 +46,9 @@ export default class OmniCollectorPlugin extends Plugin {
       const source: ListDataSource = {
         list: () => this.engine.listCollections(),
         onOrganize: (id, state) => this.engine.setOrganizeState(id, state).then(() => undefined),
+        onTag: (id, tag) => this.engine.addTag(id, tag).then(() => undefined),
+        onTopic: (id, topic) => this.engine.addTopic(id, topic).then(() => undefined),
+        onPriority: (id, priority) => this.engine.setPriority(id, priority).then(() => undefined),
       };
       return new OmniCollectionListView(leaf, source);
     });
@@ -128,17 +131,27 @@ export default class OmniCollectorPlugin extends Plugin {
     await saveSettings(this, this.pluginSettings);
   }
 
+  async updateRule(key: string, value: string): Promise<void> {
+    try {
+      await this.engine.updateRule(key, value);
+      new Notice(`已保存：${key}`);
+    } catch (err) {
+      new Notice(`规则更新失败：${(err as Error).message}`);
+    }
+  }
+
   private get controller(): OmniController {
     return {
-      openCollectionList: () => this.openCollectionList(),
+      openCollectionList: (platform?: string) => this.openCollectionList(platform),
       openAiReview: () => this.openAiReviewView(),
       openSettings: () => this.openSettingsTab(),
       startEngine: async () => {
         await this.engine.startEngine("query");
+        new Notice("Engine 已启动");
       },
       syncAll: () => this.syncAllAndRender(),
       syncPlatform: async (platform) => {
-        const res = await this.engine.syncPlatform(platform, "catalog");
+        const res = await this.engine.syncPlatform(platform, this.pluginSettings.initialSyncMode);
         const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number };
         if (report.status === "success") {
           new Notice(`Omni Collector: ${platform} 同步完成（+${report.itemsAdded ?? 0} 新增 / ${report.itemsUpdated ?? 0} 更新）`);
@@ -174,7 +187,7 @@ export default class OmniCollectorPlugin extends Plugin {
     let ok = 0;
     for (const platform of platforms) {
       try {
-        const res = await this.engine.syncPlatform(platform, "catalog");
+        const res = await this.engine.syncPlatform(platform, this.pluginSettings.initialSyncMode);
         const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number };
         if (report.status === "success") ok += 1;
       } catch {
@@ -220,12 +233,14 @@ export default class OmniCollectorPlugin extends Plugin {
     new Notice(`Omni Collector: 已生成/更新 ${count} 个 Markdown`);
   }
 
-  private async openCollectionList(): Promise<void> {
+  private async openCollectionList(platform?: string): Promise<void> {
     const { workspace } = this.app;
     let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(VIEW_TYPE_OMNI_LIST)[0] ?? null;
     if (!leaf) {
       leaf = workspace.getRightLeaf(false);
-      if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_LIST, active: true });
+      if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_LIST, active: true, state: { platform: platform ?? null } });
+    } else {
+      await leaf.setViewState({ type: VIEW_TYPE_OMNI_LIST, active: true, state: { platform: platform ?? null } });
     }
     if (leaf) workspace.revealLeaf(leaf);
   }

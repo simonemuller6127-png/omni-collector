@@ -8,6 +8,8 @@ import { validateOmniMessage } from "@omni/shared-core";
 export interface EngineClientOptions {
   pipePath: string;
   wsUrl: string;
+  /** 固定 WS 端口（测试/嵌入场景）；默认自动分配空闲端口。 */
+  wsPort?: number;
   nodeBin?: string;
   engineScript?: string;
   dataDir: string;
@@ -25,12 +27,49 @@ export class EngineClient {
   private readonly eventCbs: Array<(msg: OmniMessage) => void> = [];
   private eventsAttached = false;
   private readonly requestTimeoutMs: number;
+  private wsUrl: string;
+  private started = false;
+  private starting?: Promise<void>;
 
   constructor(private readonly opts: EngineClientOptions) {
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 30_000;
+    this.wsUrl = opts.wsUrl;
   }
 
   async startEngine(taskKind: string): Promise<void> {
+    if (this.started) return;
+    if (this.starting) return this.starting;
+    this.starting = this.doStart(taskKind).finally(() => {
+      this.starting = undefined;
+    });
+    return this.starting;
+  }
+
+  /** 若引擎未启动则自动拉起（请求类方法内部调用）。 */
+  async ensureStarted(): Promise<void> {
+    if (this.started) return;
+    await this.startEngine("query");
+  }
+
+  get connected(): boolean {
+    return this.started;
+  }
+
+  /** 轻量连通性探测。 */
+  async ping(): Promise<boolean> {
+    try {
+      await this.listPlatformStatus();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async doStart(taskKind: string): Promise<void> {
+    // 预先分配真实 WS 端口（engine --ws-port 0 时客户端拿不到实际端口）
+    const wsPort = this.opts.wsPort ?? (await this.findFreePort());
+    const token = new URL(this.opts.wsUrl).searchParams.get("token") ?? "";
+    this.wsUrl = `ws://127.0.0.1:${wsPort}/?token=${token}`;
     this.proc =
       this.opts.spawnEngine?.() ??
       spawn(
@@ -42,28 +81,72 @@ export class EngineClient {
           "--socket",
           this.pipeNameOf(this.opts.pipePath),
           "--ws-port",
-          String(new URL(this.opts.wsUrl).port),
+          String(wsPort),
           "--ws-token",
-          new URL(this.opts.wsUrl).searchParams.get("token") ?? "",
+          token,
         ],
         { stdio: "ignore", windowsHide: true },
       );
-    this.eventsAttached = false;
-    this.ws = new WebSocket(this.opts.wsUrl);
-    await new Promise<void>((resolve, reject) => {
-      this.ws!.once("open", () => resolve());
-      this.ws!.once("error", reject);
+    this.proc.once("exit", () => {
+      this.started = false;
+      this.eventsAttached = false;
     });
-    await this.request({
+    this.eventsAttached = false;
+    // 引擎启动有延迟，WS 连接需要重试（最多 ~16s）
+    let connected = false;
+    for (let attempt = 0; attempt < 8 && !connected; attempt += 1) {
+      try {
+        this.ws = new WebSocket(this.wsUrl);
+        await new Promise<void>((resolve, reject) => {
+          const t = setTimeout(() => reject(new Error("ws connect timeout")), 3000);
+          this.ws!.once("open", () => {
+            clearTimeout(t);
+            resolve();
+          });
+          this.ws!.once("error", (e) => {
+            clearTimeout(t);
+            reject(e);
+          });
+        });
+        connected = true;
+      } catch {
+        this.ws?.terminate();
+        if (attempt === 7) throw new Error("ws connect failed after retries");
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    const res = await this.requestRaw({
       request_id: randomUUID(),
       timestamp: new Date().toISOString(),
       message_type: "ENGINE_START",
       payload: { task: taskKind },
     });
+    if (res.message_type !== "ENGINE_READY") {
+      throw new Error(`ENGINE_START failed: ${res.message_type}`);
+    }
+    this.started = true;
     this.attachEvents();
   }
 
+  private findFreePort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const srv = net.createServer();
+      srv.once("error", reject);
+      srv.listen(0, "127.0.0.1", () => {
+        const address = srv.address() as net.AddressInfo;
+        srv.close(() => resolve(address.port));
+      });
+    });
+  }
+
   request(msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string }): Promise<OmniMessage> {
+    if (!this.started && msg.message_type !== "ENGINE_START") {
+      return this.ensureStarted().then(() => this.requestRaw(msg));
+    }
+    return this.requestRaw(msg);
+  }
+
+  private requestRaw(msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string }): Promise<OmniMessage> {
     const full: OmniMessage = { ...msg, timestamp: msg.timestamp ?? new Date().toISOString() };
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(this.opts.pipePath);
@@ -211,6 +294,36 @@ export class EngineClient {
       payload: { scope: "platforms" },
     });
     return (res.payload?.platforms as Array<{ platform: string; count: number; lastSyncAt: string | null }>) ?? [];
+  }
+
+  /** 用户手动给收藏打 Tag。 */
+  async addTag(collectionId: string, tag: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_TAG",
+      payload: { collection_id: collectionId, tag },
+    });
+  }
+
+  /** 用户手动把收藏归入 Topic。 */
+  async addTopic(collectionId: string, topic: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_TOPIC",
+      payload: { collection_id: collectionId, topic },
+    });
+  }
+
+  /** 用户手动设置收藏优先级。 */
+  async setPriority(collectionId: string, priority: "normal" | "important" | "project" | "knowledge"): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_PRIORITY",
+      payload: { collection_id: collectionId, priority },
+    });
   }
 
   watchExit(cb: (code: number) => void): void {

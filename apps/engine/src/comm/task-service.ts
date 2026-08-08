@@ -73,6 +73,9 @@ export class TaskService {
       TASK_AI: (msg) => this.ai(msg),
       TASK_GROUP: (msg) => this.group(msg),
       TASK_ORGANIZE: (msg) => this.organize(msg),
+      TASK_TAG: (msg) => this.tag(msg),
+      TASK_TOPIC: (msg) => this.topic(msg),
+      TASK_PRIORITY: (msg) => this.priority(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
@@ -174,8 +177,12 @@ export class TaskService {
       if (scope === "collections") {
         const collections = new CollectionRepository(this.db);
         const groups = new ContentGroupRepository(this.db);
+        const tagRepo = new TagRepository(this.db);
+        const topicRepo = new TopicRepository(this.db);
         const dtos: CollectionDTO[] = collections.listAll().map((c) => {
           const group = groups.groupOfCollection(c.id);
+          const tags = tagRepo.listTagsOfCollection(c.id).map((t) => t.name);
+          const topics = topicRepo.listTopicsOfCollection(c.id).map((t) => t.name);
           return {
             id: c.id,
             platform: c.platform,
@@ -196,6 +203,8 @@ export class TaskService {
             lastSyncedAt: c.last_synced_at ?? undefined,
             groupId: group?.id,
             groupName: group?.name,
+            tags,
+            topics,
           };
         });
         return complete(msg.request_id, { task: "status_query", scope, collections: dtos });
@@ -245,6 +254,57 @@ export class TaskService {
       return complete(msg.request_id, { task: "organize", collection_id: collectionId, organize_status: status });
     } catch (err) {
       return error(msg.request_id, "ORG_001", `ORG_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 用户手动打 Tag（content_tags source=user）。 */
+  async tag(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const tag = String(msg.payload.tag ?? "").trim();
+    if (!collectionId || !tag) {
+      return error(msg.request_id, "TAG_001", "TAG_001: invalid collection_id or tag");
+    }
+    try {
+      const tags = new TagRepository(this.db);
+      const row = tags.ensureTag(tag);
+      tags.bindTag(collectionId, row.id, "user");
+      return complete(msg.request_id, { task: "tag", collection_id: collectionId, tag: row.name });
+    } catch (err) {
+      return error(msg.request_id, "TAG_001", `TAG_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 用户手动建 Topic（topics 表 accepted 状态）。 */
+  async topic(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const topic = String(msg.payload.topic ?? "").trim();
+    if (!collectionId || !topic) {
+      return error(msg.request_id, "TOPIC_001", "TOPIC_001: invalid collection_id or topic");
+    }
+    try {
+      const topics = new TopicRepository(this.db);
+      const row = topics.findByName(topic) ?? topics.createTopic(topic, collectionId);
+      topics.addCollection(row.id, collectionId);
+      topics.setStatus(row.id, "accepted");
+      return complete(msg.request_id, { task: "topic", collection_id: collectionId, topic: row.name });
+    } catch (err) {
+      return error(msg.request_id, "TOPIC_001", `TOPIC_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 用户手动设置收藏优先级（普通/重要/项目/知识）。 */
+  async priority(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const priority = String(msg.payload.priority ?? "");
+    const valid = ["normal", "important", "project", "knowledge"];
+    if (!collectionId || !valid.includes(priority)) {
+      return error(msg.request_id, "PRI_001", "PRI_001: invalid collection_id or priority");
+    }
+    try {
+      new CollectionRepository(this.db).setPriority(collectionId, priority as "normal" | "important" | "project" | "knowledge");
+      return complete(msg.request_id, { task: "priority", collection_id: collectionId, priority });
+    } catch (err) {
+      return error(msg.request_id, "PRI_001", `PRI_001: ${(err as Error).message}`);
     }
   }
 

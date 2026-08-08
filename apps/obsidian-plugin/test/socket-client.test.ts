@@ -36,6 +36,7 @@ describe("EngineClient", () => {
     client = new EngineClient({
       pipePath: info.pipePath,
       wsUrl,
+      wsPort: info.wsPort,
       dataDir: "unused",
       spawnEngine: () => spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]),
     });

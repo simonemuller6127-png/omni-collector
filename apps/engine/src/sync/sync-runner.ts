@@ -30,6 +30,8 @@ const ADAPTER_FACTORIES: Record<string, () => BaseAdapter> = {
 };
 
 export const SUPPORTED_PLATFORMS = Object.keys(ADAPTER_FACTORIES);
+/** 指纹绑定/Cloudflare 平台必须复用持久化 Profile；其余平台走 cookie/storageState 注入。 */
+const PERSISTENT_PROFILE_PLATFORMS = new Set(["makerworld"]);
 
 export interface SyncRunnerOptions {
   dataDir: string;
@@ -82,7 +84,10 @@ export class SyncRunner {
       });
       // 指纹绑定平台（如 MakerWorld 的 Cloudflare 会话）需复用持久化 Profile
       const profileDir = sessions.profileDir(platform);
-      ctx = fs.existsSync(profileDir) ? await sessions.createPersistent(platform) : await sessions.create(platform);
+      ctx =
+        PERSISTENT_PROFILE_PLATFORMS.has(platform) && fs.existsSync(profileDir)
+          ? await sessions.createPersistent(platform)
+          : await sessions.create(platform);
       return await pipeline.run(platform, mode, ctx);
     } finally {
       if (ctx) await sessions.close(ctx).catch(() => {});

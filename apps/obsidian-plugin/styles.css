@@ -180,6 +180,43 @@
   font-size: 0.9em;
 }
 
+.omni-total {
+  color: var(--text-muted);
+  font-size: 0.82em;
+  padding: 2px 2px 4px;
+}
+
+.omni-btn-ghost {
+  background: transparent;
+}
+
+.omni-toolbar-sep {
+  color: var(--text-faint);
+  align-self: center;
+}
+
+.omni-row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+}
+
+.omni-badge-tag {
+  background: #4caf5022;
+  color: #3d9c41;
+}
+
+.omni-badge-topic {
+  background: #9c27b022;
+  color: #8e24aa;
+}
+
+.omni-act-priority {
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+}
+
 .omni-ai-list {
   display: flex;
   flex-direction: column;

@@ -235,4 +235,31 @@ describe("TaskService (internal, fake provider)", () => {
       service.dispose();
     }
   });
+
+  it("TASK_TAG / TASK_TOPIC / TASK_PRIORITY apply user edits", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("xiaohongshu", "n1", { url: "https://x/1", title: "T" });
+      manager.close();
+
+      const h = service.handlers();
+      expect((await h.TASK_TAG?.(makeMsg("TASK_TAG", { collection_id: col.id, tag: "AI" })))?.message_type).toBe("TASK_COMPLETE");
+      expect((await h.TASK_TOPIC?.(makeMsg("TASK_TOPIC", { collection_id: col.id, topic: "AI 工程" })))?.message_type).toBe("TASK_COMPLETE");
+      expect((await h.TASK_PRIORITY?.(makeMsg("TASK_PRIORITY", { collection_id: col.id, priority: "important" })))?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const vdb = verifier.getDb();
+      expect(new TagRepository(vdb).listTagsOfCollection(col.id).map((t) => t.name)).toEqual(["AI"]);
+      expect(new TopicRepository(vdb).listTopicsOfCollection(col.id).map((t) => t.name)).toEqual(["AI 工程"]);
+      expect(new CollectionRepository(vdb).findById(col.id)?.priority).toBe("important");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
 });

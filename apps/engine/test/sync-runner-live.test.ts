@@ -23,7 +23,7 @@ afterAll(() => {
 describe.skipIf(!hasBiliCookie)("SyncRunner (live, full pipeline into temp db)", () => {
   it(
     "runs bilibili catalog sync: browser session -> adapter -> sqlite",
-    async () => {
+    async (tctx) => {
       const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-runner-"));
       tmpDirs.push(dataDir);
       const migDir = path.join(dataDir, "migrations");
@@ -31,6 +31,17 @@ describe.skipIf(!hasBiliCookie)("SyncRunner (live, full pipeline into temp db)",
       // SyncRunner 在同一 dataDir 中同时读 cookie 库与数据库，因此把真实 cookie 库复制进临时目录
       fs.cpSync(path.join(DATA_DIR, "cookies"), path.join(dataDir, "cookies"), { recursive: true });
       fs.copyFileSync(path.join(DATA_DIR, "key.bin"), path.join(dataDir, "key.bin"));
+      // 会话失效时跳过（B 站 nav 返回未登录）
+      const raw = new CookieCipher(dataDir).decryptCookie("bilibili");
+      const navRes = await fetch("https://api.bilibili.com/x/web-interface/nav", {
+        headers: { Cookie: raw ?? "", "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(15000),
+      });
+      const nav = (await navRes.json()) as { code?: number; data?: { isLogin?: boolean } };
+      if (nav.code !== 0 || nav.data?.isLogin !== true) {
+        tctx.skip();
+        return;
+      }
       const runner = new SyncRunner({ dataDir, migrationsDir: migDir, headless: true });
       const report = await runner.run("bilibili", "catalog");
       expect(report.status).toBe("success");

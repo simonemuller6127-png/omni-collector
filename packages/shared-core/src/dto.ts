@@ -20,6 +20,8 @@ export interface CollectionDTO {
   lastSyncedAt?: string;
   groupId?: string;
   groupName?: string;
+  tags?: string[];
+  topics?: string[];
 }
 
 export interface UserZone {

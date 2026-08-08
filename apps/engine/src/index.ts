@@ -68,7 +68,8 @@ async function main(): Promise<void> {
       const type = rules.get("ai_provider");
       const key = process.env.OMNI_AI_API_KEY ?? rules.get("ai_api_key");
       if (!type || !key) return null;
-      return createProvider(type === "openai" ? "openai" : "deepseek", { apiKey: key });
+      const model = rules.get("ai_model") || undefined;
+      return createProvider(type === "openai" ? "openai" : "deepseek", { apiKey: key, model });
     },
   });
   const server = new EngineCommServer({ handlers: service.handlers() });

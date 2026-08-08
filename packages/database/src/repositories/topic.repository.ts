@@ -63,6 +63,17 @@ export class TopicRepository {
       | undefined;
   }
 
+  listTopicsOfCollection(collectionId: string): TopicRow[] {
+    const all = this.listTopics();
+    return all.filter((t) => {
+      try {
+        return (JSON.parse(t.collection_ids ?? "[]") as string[]).includes(collectionId);
+      } catch {
+        return false;
+      }
+    });
+  }
+
   private findById(id: string): TopicRow | undefined {
     return this.db.prepare("SELECT * FROM topics WHERE id = ?").get(id) as TopicRow | undefined;
   }

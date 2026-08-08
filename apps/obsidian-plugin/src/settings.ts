@@ -11,6 +11,16 @@ export interface OmniSettings {
   makerworldSyncLikes: boolean;
   /** Node.js 可执行文件路径（Engine 子进程）；留空时使用 PATH 上的 node。 */
   nodeBin: string;
+  /** AI 批处理总开关（写入规则 ai_enabled）。 */
+  aiEnabled: boolean;
+  /** AI Provider：deepseek | openai。 */
+  aiProvider: string;
+  /** AI API Key（写入规则 ai_api_key，仅本地）。 */
+  aiApiKey: string;
+  /** AI 模型名（写入规则 ai_model）。 */
+  aiModel: string;
+  /** 初次/手动同步模式：catalog（轻量目录）| full（含详情）。 */
+  initialSyncMode: "catalog" | "full";
 }
 
 export const DEFAULT_SETTINGS: OmniSettings = {
@@ -19,6 +29,11 @@ export const DEFAULT_SETTINGS: OmniSettings = {
   wsToken: "",
   makerworldSyncLikes: false,
   nodeBin: "",
+  aiEnabled: false,
+  aiProvider: "deepseek",
+  aiApiKey: "",
+  aiModel: "",
+  initialSyncMode: "catalog",
 };
 
 export async function loadSettings(plugin: Plugin): Promise<OmniSettings> {
