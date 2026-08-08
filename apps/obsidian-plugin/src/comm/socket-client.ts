@@ -351,6 +351,20 @@ export class EngineClient {
     });
   }
 
+  /** 按需抓取网页正文（不落盘）。 */
+  async fetchPageText(url: string): Promise<{ title?: string; text?: string }> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_FETCH",
+      payload: { url },
+    });
+    return {
+      title: (res.payload?.title as string | undefined) ?? undefined,
+      text: (res.payload?.text as string | undefined) ?? undefined,
+    };
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }

@@ -16,6 +16,8 @@ import type { CollectionDTO } from "@omni/shared-core";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
 import { ContentGroupService } from "../group/content-group-service.js";
 import { FileIndexer } from "../fileindex/file-indexer.js";
+import { BrowserSessionManager } from "../sync/browser-session.js";
+import { XiaohongshuAdapter } from "@omni/adapters";
 import { SyncRunner } from "../sync/sync-runner.js";
 import type { SyncMode } from "../sync/sync-pipeline.js";
 import type { CommHandler } from "./comm-server.js";
@@ -80,6 +82,7 @@ export class TaskService {
       TASK_TOPIC: (msg) => this.topic(msg),
       TASK_PRIORITY: (msg) => this.priority(msg),
       TASK_INDEX: (msg) => this.index(msg),
+      TASK_FETCH: (msg) => this.fetchText(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
@@ -366,6 +369,53 @@ export class TaskService {
       return complete(msg.request_id, { task: "index", folder, report });
     } catch (err) {
       return error(msg.request_id, "IDX_001", `IDX_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 按需抓取收藏网页正文（不落盘）：小红书走签名 feed，其余浏览器提取。 */
+  async fetchText(msg: OmniMessage): Promise<OmniMessage> {
+    const url = String(msg.payload.url ?? "");
+    if (!url) return error(msg.request_id, "FETCH_001", "FETCH_001: missing url");
+    const col = new CollectionRepository(this.db).findByUrl(url);
+    const platform = col?.platform ?? String(msg.payload.platform ?? "");
+    const sessions = new BrowserSessionManager({ dataDir: this.opts.dataDir, headless: true });
+    let ctx;
+    try {
+      ctx = await sessions.create(platform);
+      // 小红书：签名 feed（需要 xsec_token，存在 extra_json）
+      if (col?.platform === "xiaohongshu") {
+        const extra = (() => {
+          try {
+            return JSON.parse(col.extra_json ?? "{}") as { xsecToken?: string };
+          } catch {
+            return {};
+          }
+        })();
+        const noteId = /(?:explore|discovery\/item|note)\/([0-9a-zA-Z]+)/.exec(url)?.[1];
+        if (noteId && extra.xsecToken) {
+          const adapter = new XiaohongshuAdapter();
+          const result = await adapter.fetchNoteText(ctx, noteId, extra.xsecToken);
+          if (result) {
+            return complete(msg.request_id, { task: "fetch", url, platform, title: result.title, text: result.text.slice(0, 20000) });
+          }
+        }
+        return error(msg.request_id, "FETCH_002", "FETCH_002: 小红书正文需重新同步获取 xsec_token（风控期内暂不可用）");
+      }
+      // 其余平台：浏览器打开页面提取正文
+      const page = await ctx.newPage();
+      try {
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+        await page.waitForTimeout(4000);
+        const title = await page.title().catch(() => "");
+        const text = await page.evaluate(() => (document.body?.innerText ?? "").replace(/\n{2,}/g, "\n").slice(0, 20000)).catch(() => "");
+        return complete(msg.request_id, { task: "fetch", url, platform, title: title.slice(0, 200), text });
+      } finally {
+        await page.close().catch(() => {});
+      }
+    } catch (err) {
+      return error(msg.request_id, "FETCH_001", `FETCH_001: ${(err as Error).message}`);
+    } finally {
+      if (ctx) await sessions.close(ctx).catch(() => {});
     }
   }
 

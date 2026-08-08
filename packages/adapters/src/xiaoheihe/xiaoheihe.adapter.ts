@@ -181,9 +181,14 @@ export class XiaoheiheAdapter extends BaseAdapter {
         timeout: 90000,
       });
       await page.waitForTimeout(10000);
-      if (!page.isClosed()) {
+      // 循环滚动分页：直到收藏 API 不再返回新数据（上限 6 轮）
+      for (let round = 0; round < 6; round += 1) {
+        if (page.isClosed()) break;
+        const before = captured.flatMap((j) => parseXhhFavoritePayload(j)).length;
         await page.mouse.wheel(0, 2200);
-        await this.withRandomDelay(1500, 4000);
+        await this.withRandomDelay(1200, 3000);
+        const after = captured.flatMap((j) => parseXhhFavoritePayload(j)).length;
+        if (after === before) break;
       }
 
       const items = captured.flatMap((j) => parseXhhFavoritePayload(j));

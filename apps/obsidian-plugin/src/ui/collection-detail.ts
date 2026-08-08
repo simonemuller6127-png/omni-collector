@@ -5,6 +5,7 @@ export const VIEW_TYPE_OMNI_DETAIL = "omni-collector-detail";
 
 export interface DetailDataSource {
   get(collectionId: string): Promise<CollectionDTO | null>;
+  fetchText(url: string): Promise<{ title?: string; text?: string }>;
   onOrganize(collectionId: string, state: CollectionDTO["organizeStatus"]): Promise<void>;
   onPriority(collectionId: string, priority: CollectionDTO["priority"]): Promise<void>;
   onTag(collectionId: string, tag: string): Promise<void>;
@@ -110,6 +111,33 @@ export class OmniCollectionDetailView extends ItemView {
       container.createEl("div", { text: "简介", cls: "omni-section-title" });
       container.createEl("div", { text: item.description, cls: "omni-detail-desc" });
     }
+
+    // 正文（按需抓取，不落盘）
+    const bodySection = container.createEl("div", { cls: "omni-detail-body" });
+    const bodyBtn = bodySection.createEl("button", { text: "加载正文", cls: "omni-btn omni-btn-sm" });
+    const bodyText = bodySection.createEl("div", { cls: "omni-detail-desc", attr: { style: "display:none;" } });
+    bodyBtn.addEventListener("click", () => {
+      bodyBtn.setText("加载中…");
+      bodyBtn.addClass("omni-btn-disabled");
+      void this.source
+        .fetchText(item.url)
+        .then((res) => {
+          bodyBtn.setText("重新加载正文");
+          bodyBtn.removeClass("omni-btn-disabled");
+          if (res.text) {
+            bodyText.setText(res.text);
+            bodyText.show();
+          } else {
+            bodyText.setText("正文暂不可用（平台限制或需重新同步）");
+            bodyText.show();
+          }
+        })
+        .catch((e) => {
+          bodyBtn.setText("加载正文");
+          bodyBtn.removeClass("omni-btn-disabled");
+          new Notice(`正文加载失败：${(e as Error).message}`);
+        });
+    });
 
     // Tags / Topics
     const chips = container.createEl("div", { cls: "omni-detail-chips" });

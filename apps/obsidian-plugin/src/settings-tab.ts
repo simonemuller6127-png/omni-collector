@@ -118,5 +118,15 @@ export class OmniSettingTab extends PluginSettingTab {
             this.plugin.updateEngineNodeBin();
           }),
       );
+
+    containerEl.createEl("h3", { text: "本地文件" });
+    new Setting(containerEl)
+      .setName("扫描并关联本地文件")
+      .setDesc("扫描库内「Omni Collector」文件夹（或自定义路径）中的 .md / .pdf，按系统区 URL 自动关联到收藏。")
+      .addButton((btn) =>
+        btn.setButtonText("选择文件夹并扫描").setCta().onClick(() => {
+          void this.plugin.scanLocalFiles();
+        }),
+      );
   }
 }

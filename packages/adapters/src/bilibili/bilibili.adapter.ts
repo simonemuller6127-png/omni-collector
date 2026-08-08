@@ -77,46 +77,56 @@ export class BilibiliAdapter extends BaseAdapter {
   async fetchCatalog(ctx: BrowserContext, cursor: SyncCursor): Promise<CollectionRaw[]> {
     const folders = await this.getFavoriteFolders(ctx);
     if (folders.length === 0) return [];
-    const mediaId = folders[0].id; // 主收藏夹（默认）
     const mixinKey = await this.mixinKey(ctx);
-    const params = signParams(
-      {
-        media_id: String(mediaId),
-        pn: String(cursor.page ?? 1),
-        ps: "20",
-        platform: "web",
-      },
-      mixinKey,
-    );
-    this.requests += 1;
-    try {
-      const res = await ctx.request.get(FAV_LIST_URL, {
-        params,
-        headers: { "User-Agent": UA },
-      });
-      const json = (await res.json()) as {
-        code: number;
-        data?: { medias?: BilibiliMedia[] };
-      };
-      if (json.code !== 0) {
-        this.failures += 1;
-        throw new Error(`B站 fav list error code=${json.code}`);
+    const rawItems: Array<{ bvid: string; title: string; cover: string; fav_time: number; upper?: { name?: string } }> = [];
+    // 遍历全部收藏夹（上限 20 个），每个取前 5 页
+    for (const folder of folders.slice(0, 20)) {
+      for (let pn = 1; pn <= 5; pn += 1) {
+        const params = signParams(
+          { media_id: String(folder.id), pn: String(pn), ps: '20', platform: 'web' },
+          mixinKey,
+        );
+        this.requests += 1;
+        try {
+          const res = await ctx.request.get(FAV_LIST_URL, { params, headers: { 'User-Agent': UA } });
+          const json = (await res.json()) as {
+            code: number;
+            data?: { medias?: BilibiliMedia[]; has_more?: boolean };
+          };
+          if (json.code !== 0) {
+            this.failures += 1;
+            break;
+          }
+          const medias = json.data?.medias ?? [];
+          for (const m of medias) {
+            rawItems.push({ bvid: m.bvid, title: m.title, cover: m.cover, fav_time: m.fav_time, upper: m.upper });
+          }
+          if (!json.data?.has_more || medias.length === 0) break;
+        } catch {
+          this.failures += 1;
+          break;
+        }
       }
-      return (json.data?.medias ?? []).map((m) => ({
+    }
+    const seen = new Set<string>();
+    return rawItems
+      .filter((m) => {
+        if (seen.has(m.bvid)) return false;
+        seen.add(m.bvid);
+        return true;
+      })
+      .map((m) => ({
         platformItemId: m.bvid,
         url: `https://www.bilibili.com/video/${m.bvid}`,
         title: m.title,
         author: m.upper?.name,
         coverUrl: m.cover,
         collectedAt: m.fav_time ? new Date(m.fav_time * 1000).toISOString() : undefined,
-        saveType: "favorited" as const,
-        extra: { aid: m.id, media_id: mediaId },
+        saveType: 'favorited' as const,
+        extra: { contentType: 'video' },
       }));
-    } catch (err) {
-      this.failures += 1;
-      throw err;
-    }
   }
+
 
   async fetchDetail(ctx: BrowserContext, url: string): Promise<CollectionDetail> {
     const bvid = /(BV[0-9A-Za-z]+)/.exec(url)?.[1];

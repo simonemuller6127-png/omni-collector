@@ -78,6 +78,7 @@ export class SyncPipeline {
           collected_at: raw.collectedAt,
           save_type: raw.saveType,
           content_type: contentType,
+          extra_json: raw.extra ? JSON.stringify(raw.extra) : undefined,
           catalog_synced: 1,
           sync_status: mode === "catalog" ? "catalog" : "full",
         });

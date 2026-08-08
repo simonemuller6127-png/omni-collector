@@ -172,14 +172,20 @@ export class XiaohongshuAdapter extends BaseAdapter {
     if (!userId || guest) {
       throw new Error("AUTH_002: xiaohongshu 会话为游客态，请用真实浏览器登录后更新 Cookie");
     }
-    const params = {
-      user_id: userId,
-      cursor: cursor.lastItemId ?? "",
-      num: 30,
-    } as Record<string, string | number>;
-    const body = await this.signedGet(ctx, COLLECT_API, params, jar);
-    const notes = parseXhsFavoritedNotes(body);
-    return notes.map((n, i) => {
+    // 分页拉取全部收藏（cursor 游标，最多 10 页）
+    const allNotes: XhsFavoritedNote[] = [];
+    let cursorStr = cursor.lastItemId ?? "";
+    for (let page = 0; page < 10; page += 1) {
+      const params = { user_id: userId, cursor: cursorStr, num: 30 } as Record<string, string | number>;
+      const body = await this.signedGet(ctx, COLLECT_API, params, jar);
+      const notes = parseXhsFavoritedNotes(body);
+      allNotes.push(...notes);
+      const data = body.data as { has_more?: boolean; cursor?: string } | undefined;
+      const nextCursor = data?.cursor ?? "";
+      if (!data?.has_more || !nextCursor || nextCursor === cursorStr) break;
+      cursorStr = nextCursor;
+    }
+    return allNotes.map((n, i) => {
       if (n.xsecToken) this.xsecTokens.set(n.noteId, n.xsecToken);
       return {
         platformItemId: n.noteId,
@@ -455,6 +461,28 @@ export class XiaohongshuAdapter extends BaseAdapter {
       };
     } finally {
       await page.close().catch(() => {});
+    }
+  }
+
+  /** 按需抓取笔记正文（签名 feed，不落盘；需要 xsec_token）。 */
+  async fetchNoteText(ctx: BrowserContext, noteId: string, xsecToken: string): Promise<{ title: string; text: string } | null> {
+    const jar = Object.fromEntries((await ctx.cookies()).map((c) => [c.name, c.value]));
+    try {
+      const body = await this.signedPost(ctx, "/api/sns/web/v1/feed", {
+        source_note_id: noteId,
+        image_formats: ["jpg", "webp", "avif"],
+        extra: { need_body_topic: "1" },
+        xsec_source: "pc_feed",
+        xsec_token: xsecToken,
+      }, jar);
+      const note = body?.data?.items?.[0]?.note_card;
+      if (!note) return null;
+      return {
+        title: (note.title as string) ?? "",
+        text: (note.desc as string) ?? "",
+      };
+    } catch {
+      return null;
     }
   }
 

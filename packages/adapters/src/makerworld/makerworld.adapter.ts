@@ -126,11 +126,14 @@ export class MakerWorldAdapter extends BaseAdapter {
         }).catch(() => false);
         if (!challenged) break;
       }
-      await page.mouse.wheel(0, 2400);
-      await this.withRandomDelay(1500, 4000);
-      await page.mouse.wheel(0, 2400);
-      await this.withRandomDelay(1500, 4000);
-      cards = await this.parseModelCards(page);
+      // 循环滚动分页：直到不再新增卡片（上限 8 轮）
+      for (let round = 0; round < 8; round += 1) {
+        const before = (await this.parseModelCards(page)).length;
+        await page.mouse.wheel(0, 2400);
+        await this.withRandomDelay(1200, 3000);
+        cards = await this.parseModelCards(page);
+        if (cards.length === before) break;
+      }
     }
     this.requests += 1;
     return cards.map((c) => ({

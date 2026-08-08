@@ -24,6 +24,7 @@ export interface CollectionRow {
   ai_tags?: string | null;
   ai_score?: number | null;
   embedding?: Buffer | null;
+  extra_json?: string | null;
   first_viewed_at?: string | null;
   collected_at: string;
   last_synced_at?: string | null;

@@ -59,6 +59,7 @@ export default class OmniCollectorPlugin extends Plugin {
     this.registerView(VIEW_TYPE_OMNI_DETAIL, (leaf) => {
       const source: DetailDataSource = {
         get: (id) => this.engine.getCollection(id),
+        fetchText: (url) => this.engine.fetchPageText(url),
         onOrganize: (id, s) => this.engine.setOrganizeState(id, s).then(() => undefined),
         onPriority: (id, p) => this.engine.setPriority(id, p).then(() => undefined),
         onTag: (id, t) => this.engine.addTag(id, t).then(() => undefined),
@@ -314,7 +315,7 @@ export default class OmniCollectorPlugin extends Plugin {
   }
 
   /** 扫描库内文件夹（默认 Omni Collector），把 Markdown/PDF 关联到收藏。 */
-  private async scanLocalFiles(): Promise<void> {
+  async scanLocalFiles(): Promise<void> {
     const vaultPath = (this.app.vault.adapter as unknown as { getBasePath(): string }).getBasePath();
     const defaultFolder = `${vaultPath}/Omni Collector`;
     const modal = new Modal(this.app);
