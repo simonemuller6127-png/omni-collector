@@ -107,6 +107,14 @@ export class MarkdownBuilder {
     } else {
       out = `${newFrontmatter}\n${out}`;
     }
+    // 正文 H1 是标题镜像：转义 # 避免 Obsidian 把标题话题当内联标签（用户区不动）
+    const markerIdx = out.indexOf(SYSTEM_END);
+    if (markerIdx >= 0) {
+      const head = out.slice(0, markerIdx + SYSTEM_END.length);
+      let tail = out.slice(markerIdx + SYSTEM_END.length);
+      tail = tail.replace(/^# .*$/m, `# ${escapeTitleHash(dto.title)}`);
+      out = head + tail;
+    }
     return out;
   }
 

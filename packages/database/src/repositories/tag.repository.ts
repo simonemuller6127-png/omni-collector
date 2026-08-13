@@ -118,7 +118,11 @@ export class TagRepository {
       .prepare(
         `INSERT INTO content_tags (collection_id, tag_id, source, created_at)
          VALUES (?, ?, ?, datetime('now'))
-         ON CONFLICT(collection_id, tag_id) DO UPDATE SET source = excluded.source`,
+         ON CONFLICT(collection_id, tag_id) DO UPDATE SET
+           source = CASE
+             WHEN CASE excluded.source WHEN 'platform' THEN 0 WHEN 'ai' THEN 1 ELSE 2 END
+                  > CASE content_tags.source WHEN 'platform' THEN 0 WHEN 'ai' THEN 1 ELSE 2 END
+             THEN excluded.source ELSE content_tags.source END`,
       )
       .run(collectionId, tagId, source);
   }

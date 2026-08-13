@@ -84,6 +84,27 @@ describe("MarkdownBuilder", () => {
     expect(updated).not.toContain("旧标签");
   });
 
+  it("replaceSystemZone escapes hashtags in the H1 title mirror", () => {
+    const builder = new MarkdownBuilder();
+    const first = builder.buildFromDTO({
+      ...dto,
+      title: "桌搭推荐#生活美学 #桌搭好物",
+      tags: ["生活美学"],
+    });
+    // 模拟旧版文件：H1 未转义
+    const legacy = first.replace(
+      "# 桌搭推荐\\#生活美学 \\#桌搭好物",
+      "# 桌搭推荐#生活美学 #桌搭好物",
+    );
+    const updated = builder.replaceSystemZone(legacy, {
+      ...dto,
+      title: "桌搭推荐#生活美学 #桌搭好物",
+      tags: ["生活美学"],
+    });
+    expect(updated).toContain("# 桌搭推荐\\#生活美学 \\#桌搭好物");
+    expect(updated).not.toContain("# 桌搭推荐#生活美学 #桌搭好物\n");
+  });
+
   it("builds topic hub note with wikilinks", () => {
     const hub = new MarkdownBuilder().buildTopicHub("桌搭设计", [
       "Omni Collector/xiaohongshu/桌搭推荐",

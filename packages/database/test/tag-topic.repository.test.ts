@@ -34,7 +34,7 @@ describe("TagRepository", () => {
       tags.bindTag(c1.id, a.id, "ai");
       tags.bindTag(c2.id, a.id, "user");
       expect(tags.listCollectionsByTag("AI 编程", "ai")).toEqual([c1.id]);
-      expect(tags.listCollectionsByTag("AI 编程")).toEqual([c1.id, c2.id]);
+      expect(tags.listCollectionsByTag("AI 编程").sort()).toEqual([c1.id, c2.id].sort());
       expect(tags.listTagsOfCollection(c1.id).map((t) => t.name)).toEqual(["AI 编程"]);
     } finally {
       cleanup();
@@ -73,6 +73,24 @@ describe("TagRepository", () => {
     }
   });
 
+  it("bindTag upgrades source by authority (platform < ai < user), never downgrades", () => {
+    const { db, cleanup } = setup();
+    try {
+      const tags = new TagRepository(db);
+      const collections = new CollectionRepository(db);
+      const c1 = collections.upsertByPlatformItem("bilibili", "bv1", { url: "https://x/1", title: "T1" });
+      const tag = tags.ensureTag("生活美学");
+      tags.bindTag(c1.id, tag.id, "platform");
+      tags.bindTag(c1.id, tag.id, "user");
+      expect(tags.listCollectionsByTag("生活美学", "user")).toContain(c1.id);
+      expect(tags.listCollectionsByTag("生活美学", "platform")).not.toContain(c1.id);
+      tags.bindTag(c1.id, tag.id, "platform");
+      expect(tags.listCollectionsByTag("生活美学", "user")).toContain(c1.id);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("merges tags: rebinds collections, merges aliases, deletes source", () => {
     const { db, cleanup } = setup();
     try {
@@ -87,7 +105,7 @@ describe("TagRepository", () => {
       tags.bindTag(c2.id, target.id, "ai");
       tags.addAlias("生活美", "shm");
       tags.mergeTags("生活美", "生活美学");
-      expect(tags.listCollectionsByTag("生活美学").sort()).toEqual([c1.id, c2.id]);
+      expect(tags.listCollectionsByTag("生活美学").sort()).toEqual([c1.id, c2.id].sort());
       expect(tags.findByAlias("shm")?.name).toBe("生活美学");
       expect(tags.ensureTag("生活美").id).toBe(target.id);
       const c2Tags = tags.listTagsOfCollection(c2.id);
@@ -110,7 +128,7 @@ describe("TagRepository", () => {
       const renamed = tags.renameTag("旧名", "新名");
       expect(renamed.id).toBe(target.id);
       expect(tags.listTags().find((t) => t.name === "旧名")).toBeUndefined();
-      expect(tags.listCollectionsByTag("新名")).toEqual([c1.id]);
+      expect(tags.listCollectionsByTag("新名").sort()).toEqual([c1.id].sort());
     } finally {
       cleanup();
     }
