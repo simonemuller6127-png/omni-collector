@@ -1,13 +1,15 @@
-﻿{
+{
   "id": "omni-collector",
   "name": "Omni Collector",
   "version": "0.4.0",
   "minAppVersion": "1.5.0",
-  "description": "鍏ㄥ钩鍙版敹钘忓悓姝ヤ笌鏈湴鐭ヨ瘑绠＄悊锛圔绔?/ YouTube / 灏忕孩涔?/ MakerWorld / 灏忛粦鐩掞級锛屾敮鎸?AI 鏁寸悊寤鸿涓?ContentGroup 鍏宠仈璇嗗埆銆?,
+  "description": "全平台收藏同步与本地知识管理（B站 / YouTube / 小红书 / MakerWorld / 小黑盒），支持 AI 整理建议与 ContentGroup 关联识别。",
   "author": "Omni Collector",
   "authorUrl": "https://github.com/simonemuller6127-png/omni-collector",
   "isDesktopOnly": true,
   "fundingUrl": "",
-  "main": "dist/main.js",
-  "styles": ["styles.css"]
+  "main": "main.js",
+  "styles": [
+    "styles.css"
+  ]
 }
