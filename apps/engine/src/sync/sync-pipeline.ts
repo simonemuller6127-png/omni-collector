@@ -19,6 +19,7 @@ export interface SyncReport {
   status: "success" | "failed";
   itemsAdded: number;
   itemsUpdated: number;
+  itemsFetched: number;
   errorCode?: string;
   errorDetail?: string;
 }
@@ -58,12 +59,14 @@ export class SyncPipeline {
       status: "success",
       itemsAdded: 0,
       itemsUpdated: 0,
+      itemsFetched: 0,
     };
     try {
       const adapter = this.deps.getAdapter(platform);
       const account = this.deps.accounts.getOrCreate(platform);
       const cursor = account.sync_cursor ? (JSON.parse(account.sync_cursor) as { page?: number }) : {};
       const raws = await adapter.fetchCatalog(ctx!, cursor);
+      report.itemsFetched = raws.length;
       let added = 0;
       let updated = 0;
       for (const raw of raws) {
@@ -79,6 +82,7 @@ export class SyncPipeline {
           save_type: raw.saveType,
           content_type: contentType,
           extra_json: raw.extra ? JSON.stringify(raw.extra) : undefined,
+          content_status: raw.extra?.deleted ? "deleted" : "active",
           catalog_synced: 1,
           sync_status: mode === "catalog" ? "catalog" : "full",
         });

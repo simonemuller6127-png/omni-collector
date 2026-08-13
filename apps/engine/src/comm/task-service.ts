@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { OmniMessage } from "@omni/shared-core";
 import type { AIProvider } from "@omni/ai";
+import { parseSuggestions } from "@omni/ai";
 import {
   AIRepository,
   CollectionRepository,
@@ -88,6 +89,7 @@ export class TaskService {
       TASK_FETCH: (msg) => this.fetchText(msg),
       TASK_CONVERT: (msg) => this.convert(msg),
       TASK_BATCH: (msg) => this.batch(msg),
+      TASK_AI_MANUAL: (msg) => this.aiManual(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
@@ -191,7 +193,7 @@ export class TaskService {
         const groups = new ContentGroupRepository(this.db);
         const tagRepo = new TagRepository(this.db);
         const topicRepo = new TopicRepository(this.db);
-        const dtos: CollectionDTO[] = collections.listAll().map((c) => {
+        const dtos: CollectionDTO[] = collections.listAll(undefined, true).map((c) => {
           const group = groups.groupOfCollection(c.id);
           const tags = tagRepo.listTagsOfCollection(c.id).map((t) => t.name);
           const topics = topicRepo.listTopicsOfCollection(c.id).map((t) => t.name);
@@ -503,6 +505,33 @@ export class TaskService {
       return complete(msg.request_id, { task: "batch", action, value, applied, failed });
     } catch (err) {
       return error(msg.request_id, "BATCH_001", `BATCH_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** Manual 模式：用户粘贴任意 AI 工具的回复，解析为 Suggestion（PRD 19.3）。 */
+  async aiManual(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const reply = String(msg.payload.reply ?? "").trim();
+    if (!collectionId || !reply) {
+      return error(msg.request_id, "AI_006", "AI_006: missing collection_id or reply");
+    }
+    try {
+      const aiRepo = new AIRepository(this.db);
+      const suggestions = parseSuggestions(reply);
+      let saved = 0;
+      for (const s of suggestions) {
+        aiRepo.saveSuggestion({
+          collection_id: collectionId,
+          suggestion_type: s.type,
+          payload: s.payload,
+          model: "manual",
+          confidence: s.confidence,
+        });
+        saved += 1;
+      }
+      return complete(msg.request_id, { task: "ai_manual", collection_id: collectionId, saved });
+    } catch (err) {
+      return error(msg.request_id, "AI_006", `AI_006: ${(err as Error).message}`);
     }
   }
 

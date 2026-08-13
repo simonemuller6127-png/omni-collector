@@ -12,6 +12,7 @@ export interface DetailDataSource {
   onTopic(collectionId: string, topic: string): Promise<void>;
   openLocalFile(filePath: string): void;
   ensureCover(url: string): Promise<string | null>;
+  submitManualAI(collectionId: string, reply: string): Promise<void>;
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -91,6 +92,9 @@ export class OmniCollectionDetailView extends ItemView {
 
     container.createEl("div", { text: item.title || item.platformItemId, cls: "omni-detail-title" });
     const meta = container.createEl("div", { cls: "omni-row-meta" });
+    if (item.contentStatus === "deleted") {
+      meta.createEl("span", { text: "失效", cls: "omni-badge omni-badge-deleted" });
+    }
     meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform" });
     meta.createEl("span", { text: item.author ?? "未知作者", cls: "omni-badge" });
     meta.createEl("span", { text: item.contentType === "video" ? "视频" : item.contentType, cls: "omni-badge" });
@@ -163,6 +167,8 @@ export class OmniCollectionDetailView extends ItemView {
     tagBtn.addEventListener("click", () => this.promptText("打 Tag", "输入标签名", (v) => this.source.onTag(item.id, v)));
     const topicBtn = chips.createEl("button", { text: "＋Topic", cls: "omni-chip" });
     topicBtn.addEventListener("click", () => this.promptText("归入 Topic", "输入 Topic 名", (v) => this.source.onTopic(item.id, v)));
+    const manualBtn = chips.createEl("button", { text: "Manual AI", cls: "omni-chip" });
+    manualBtn.addEventListener("click", () => this.promptManualAI(item));
 
     // 已同步评论
     if ((item.comments ?? []).length > 0) {
@@ -244,6 +250,47 @@ export class OmniCollectionDetailView extends ItemView {
       if (e.key === "Enter") done();
     });
     modal.contentEl.createEl("button", { text: "确定", cls: "omni-btn omni-btn-primary" }).addEventListener("click", done);
+    modal.open();
+  }
+
+  private promptManualAI(item: CollectionDTO): void {
+    const modal = new Modal(this.app);
+    modal.titleEl.setText("Manual 模式 AI（PRD 19.3）");
+    const template = [
+      "你是收藏整理助手。根据下面的收藏内容，输出 JSON 数组，元素结构：",
+      '{"type":"suggested_tag|suggested_topic|suggested_summary|suggested_group","payload":"...","confidence":0-1}。',
+      "suggested_tag 的 payload 为字符串数组 JSON；suggested_topic 为单个主题字符串；",
+      "suggested_summary 为 1-2 句摘要字符串；suggested_group 为收藏分组名。只输出 JSON。",
+      "",
+      "--- 收藏内容 ---",
+      `标题：${item.title}`,
+      `平台：${item.platform}`,
+      `链接：${item.url}`,
+      item.description ? `简介：${item.description.slice(0, 500)}` : "",
+    ].join("\n");
+    modal.contentEl.createEl("h4", { text: "1) 复制模板到任意 AI 工具（ChatGPT/DeepSeek 等）" });
+    const tpl = modal.contentEl.createEl("textarea", { attr: { rows: "12", style: "width:100%;" } });
+    tpl.value = template;
+    modal.contentEl.createEl("button", { text: "复制模板", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+      tpl.select();
+      document.execCommand("copy");
+      new Notice("模板已复制");
+    });
+    modal.contentEl.createEl("h4", { text: "2) 粘贴 AI 返回的结果" });
+    const reply = modal.contentEl.createEl("textarea", { attr: { rows: "8", style: "width:100%;" } });
+    modal.contentEl.createEl("button", { text: "提交并生成建议", cls: "omni-btn omni-btn-primary" }).addEventListener("click", () => {
+      if (!reply.value.trim()) {
+        new Notice("请粘贴 AI 回复");
+        return;
+      }
+      void this.source
+        .submitManualAI(item.id, reply.value)
+        .then(() => {
+          modal.close();
+          new Notice("建议已生成（请到 AI 建议审核确认）");
+        })
+        .catch((e) => new Notice(`提交失败：${(e as Error).message}`));
+    });
     modal.open();
   }
 

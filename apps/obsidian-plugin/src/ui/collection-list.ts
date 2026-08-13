@@ -278,6 +278,10 @@ export class OmniCollectionListView extends ItemView {
       const meta = main.createEl('div', { cls: 'omni-row-meta' });
       meta.createEl('span', { text: PLATFORMS.find((p) => p.key === item.platform)?.label ?? item.platform, cls: 'omni-badge omni-badge-platform' });
       meta.createEl('span', { text: item.saveType === 'liked' ? '点赞' : item.saveType === 'watch_later' ? '稍后再看' : '收藏', cls: 'omni-badge' });
+      if (item.contentStatus === "deleted") {
+        meta.createEl('span', { text: '失效', cls: 'omni-badge omni-badge-deleted' });
+        row.addClass("omni-row-deleted");
+      }
       meta.createEl('span', { text: PRIORITIES.find((p) => p.key === item.priority)?.label ?? item.priority, cls: 'omni-badge omni-badge-priority' });
       if (item.groupName) meta.createEl('span', { text: `组:${item.groupName}`, cls: 'omni-badge omni-badge-group' });
       for (const t of item.tags ?? []) meta.createEl('span', { text: `#${t}`, cls: 'omni-badge omni-badge-tag' });

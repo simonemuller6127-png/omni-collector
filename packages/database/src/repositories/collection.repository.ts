@@ -91,10 +91,11 @@ export class CollectionRepository extends BaseRepository<CollectionRow> {
     return (limit ? this.db.prepare(sql).all(status, limit) : this.db.prepare(sql).all(status)) as CollectionRow[];
   }
 
-  listAll(limit?: number): CollectionRow[] {
+  listAll(limit?: number, includeDeleted = false): CollectionRow[] {
+    const where = includeDeleted ? "" : "WHERE content_status = 'active'";
     const sql = limit
-      ? "SELECT * FROM collections WHERE content_status = 'active' ORDER BY collected_at ASC LIMIT ?"
-      : "SELECT * FROM collections WHERE content_status = 'active' ORDER BY collected_at ASC";
+      ? `SELECT * FROM collections ${where} ORDER BY collected_at ASC LIMIT ?`
+      : `SELECT * FROM collections ${where} ORDER BY collected_at ASC`;
     return (limit ? this.db.prepare(sql).all(limit) : this.db.prepare(sql).all()) as CollectionRow[];
   }
 

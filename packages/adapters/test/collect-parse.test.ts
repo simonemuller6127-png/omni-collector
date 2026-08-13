@@ -140,7 +140,7 @@ describe("parseXhhFavoritePayload", () => {
     expect(items[0].collectedAt).toBe("2026-08-04T04:15:40.000Z");
   });
 
-  it("skips deleted links", () => {
+  it("keeps deleted links with deleted flag (PRD: 失效内容保留并标记)", () => {
     const json = {
       result: {
         links: [
@@ -150,7 +150,9 @@ describe("parseXhhFavoritePayload", () => {
         ],
       },
     };
-    expect(parseXhhFavoritePayload(json)).toEqual([]);
+    const items = parseXhhFavoritePayload(json);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ itemId: "1", deleted: true });
   });
 
   it("returns [] for unknown payload", () => {

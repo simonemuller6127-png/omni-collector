@@ -372,6 +372,17 @@
   white-space: nowrap;
 }
 
+.omni-badge-deleted {
+  background: #f4433622;
+  color: #d32f2f;
+}
+.omni-row-deleted {
+  opacity: 0.55;
+}
+.omni-row-deleted .omni-title {
+  text-decoration: line-through;
+}
+
 .omni-ai-list {
   display: flex;
   flex-direction: column;

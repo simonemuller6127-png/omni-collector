@@ -75,6 +75,19 @@ export function buildPrompt(item: QueueItemWithContent): string {
     .join("\n");
 }
 
+/** Manual 模式提示词模板（PRD 19.3）：用户复制到任意 AI 工具，粘贴回复后回填。 */
+export function buildManualPrompt(item: QueueItemWithContent): string {
+  return [
+    "你是收藏整理助手。根据下面的收藏内容，输出 JSON 数组，元素结构：",
+    '{"type":"suggested_tag|suggested_topic|suggested_summary|suggested_group","payload":"...","confidence":0-1}。',
+    "suggested_tag 的 payload 为字符串数组 JSON；suggested_topic 为单个主题字符串；",
+    "suggested_summary 为 1-2 句摘要字符串；suggested_group 为收藏分组名。只输出 JSON，不要额外解释。",
+    "",
+    "--- 收藏内容 ---",
+    buildPrompt(item),
+  ].join("\n");
+}
+
 function extractJson(text: string): unknown {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
   const candidate = fenced?.[1] ?? text.trim();

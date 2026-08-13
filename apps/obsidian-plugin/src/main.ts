@@ -78,6 +78,7 @@ export default class OmniCollectorPlugin extends Plugin {
           if (file) void this.app.workspace.getLeaf(false).openFile(file as import("obsidian").TFile);
         },
         ensureCover: (url) => this.ensureCover(url),
+        submitManualAI: (id, reply) => this.engine.submitManualAI(id, reply).then(() => undefined),
       };
       return new OmniCollectionDetailView(leaf, source);
     });
@@ -266,9 +267,9 @@ export default class OmniCollectorPlugin extends Plugin {
       syncAll: () => this.syncAllAndRender(),
       syncPlatform: async (platform) => {
         const res = await this.engine.syncPlatform(platform, this.pluginSettings.initialSyncMode);
-        const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number };
+        const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number; itemsFetched?: number };
         if (report.status === "success") {
-          new Notice(`Omni Collector: ${platform} 同步完成（+${report.itemsAdded ?? 0} 新增 / ${report.itemsUpdated ?? 0} 更新）`);
+          new Notice(`Omni Collector: ${platform} 抓取 ${report.itemsFetched ?? 0} 条（+${report.itemsAdded ?? 0} 新增 / ${report.itemsUpdated ?? 0} 更新）`);
         } else {
           new Notice(`Omni Collector: ${platform} 同步失败 ${String(res.payload?.message ?? "")}`);
         }
@@ -313,17 +314,25 @@ export default class OmniCollectorPlugin extends Plugin {
     const platforms = ["bilibili", "youtube", "xiaohongshu", "makerworld", "xiaoheihe"];
     new Notice("Omni Collector: 开始同步全部平台…");
     let ok = 0;
+    let fetched = 0;
+    let added = 0;
+    let updated = 0;
     for (const platform of platforms) {
       try {
         const res = await this.engine.syncPlatform(platform, this.pluginSettings.initialSyncMode);
-        const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number };
-        if (report.status === "success") ok += 1;
+        const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number; itemsFetched?: number };
+        if (report.status === "success") {
+          ok += 1;
+          fetched += report.itemsFetched ?? 0;
+          added += report.itemsAdded ?? 0;
+          updated += report.itemsUpdated ?? 0;
+        }
       } catch {
         // 单平台失败不中断
       }
     }
     await this.generateCollectionMarkdown();
-    new Notice(`Omni Collector: 同步完成 ${ok}/${platforms.length} 平台`);
+    new Notice(`Omni Collector: 同步完成 ${ok}/${platforms.length} 平台，共抓取 ${fetched} 条（+${added} 新增 / ${updated} 更新）`);
   }
 
   /** 查询收藏并写入 vault：Omni Collector/{平台}/{标题}.md（仅更新系统区）。 */

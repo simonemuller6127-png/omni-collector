@@ -38,6 +38,7 @@ export interface XhhFavoriteItem {
   contentType: "post" | "game";
   topic?: string;
   video?: boolean;
+  deleted?: boolean;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -66,7 +67,6 @@ export function parseXhhFavoritePayload(json: unknown): XhhFavoriteItem[] {
     const imgs = Array.isArray(link.imgs) ? (link.imgs as string[]) : [];
     const thumbs = Array.isArray(link.thumbs) ? (link.thumbs as string[]) : [];
     const isDeleted = Number(link.is_deleted ?? 0) === 1;
-    if (isDeleted) continue;
     const createAt = Number(link.create_at ?? 0);
     const appId = link.app_id ?? topic?.app_id;
     const contentType: "post" | "game" =
@@ -82,6 +82,7 @@ export function parseXhhFavoritePayload(json: unknown): XhhFavoriteItem[] {
       contentType,
       topic: topic?.name as string | undefined,
       video: Number(link.has_video ?? 0) === 1,
+      deleted: isDeleted,
     });
   }
   return out;
@@ -210,6 +211,7 @@ export class XiaoheiheAdapter extends BaseAdapter {
             topic: it.topic,
             video: it.video,
             description: it.description,
+            ...(it.deleted ? { deleted: true } : {}),
           },
         }));
       }

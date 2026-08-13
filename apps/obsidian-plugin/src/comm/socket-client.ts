@@ -411,6 +411,16 @@ export class EngineClient {
     });
   }
 
+  /** Manual 模式：提交 AI 回复解析为 Suggestion。 */
+  async submitManualAI(collectionId: string, reply: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_AI_MANUAL",
+      payload: { collection_id: collectionId, reply },
+    });
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }
