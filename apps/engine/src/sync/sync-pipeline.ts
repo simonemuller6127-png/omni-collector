@@ -7,7 +7,9 @@ import {
   CommentRepository,
   RuleCenter,
   SyncLogRepository,
+  TagRepository,
 } from "@omni/database";
+import { extractHashtags } from "../tags/tag-utils.js";
 
 export type SyncMode = "catalog" | "full" | "detail";
 
@@ -32,6 +34,7 @@ export interface SyncPipelineDeps {
   rules: RuleCenter;
   logs: SyncLogRepository;
   ai?: AIRepository;
+  tags?: TagRepository;
 }
 
 const PRIORITY_RANK: Record<string, number> = {
@@ -91,8 +94,22 @@ export class SyncPipeline {
         } else {
           added += 1;
         }
+        // PRD 16.1 第一层：平台原生标签（标题/简介中的 #话题）
+        if (this.deps.tags) {
+          const hashtags = extractHashtags(`${raw.title ?? ""}\n${raw.extra?.description ?? ""}`);
+          for (const tag of hashtags) {
+            const tagRow = this.deps.tags.ensureTag(tag);
+            this.deps.tags.bindTag(row.id, tagRow.id, "platform");
+          }
+        }
         if (mode === "full" || mode === "detail") {
           const detail = await adapter.fetchDetail(ctx!, raw.url);
+          if (this.deps.tags && detail?.description) {
+            for (const tag of extractHashtags(detail.description)) {
+              const tagRow = this.deps.tags.ensureTag(tag);
+              this.deps.tags.bindTag(row.id, tagRow.id, "platform");
+            }
+          }
           this.deps.collections.update(row.id, {
             description: detail.description ?? null,
             transcript: detail.transcript ?? null,

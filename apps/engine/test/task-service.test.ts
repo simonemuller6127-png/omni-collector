@@ -207,6 +207,217 @@ describe("TaskService (internal, fake provider)", () => {
     }
   });
 
+  it("accepting suggested_tag with JSON array splits into individual tags", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("xiaohongshu", "n1", {
+        url: "https://x/1",
+        title: "桌搭笔记",
+      });
+      const ai = new AIRepository(db);
+      const s = ai.saveSuggestion({
+        collection_id: col.id,
+        suggestion_type: "suggested_tag",
+        payload: '["生活美学","美术生"]',
+      });
+      manager.close();
+
+      const h = service.handlers();
+      expect((await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: s.id, status: "accepted" })))?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const vdb = verifier.getDb();
+      const tags = new TagRepository(vdb);
+      expect(tags.listCollectionsByTag("生活美学", "ai")).toContain(col.id);
+      expect(tags.listCollectionsByTag("美术生", "ai")).toContain(col.id);
+      expect(tags.listTags().map((t) => t.name)).not.toContain('["生活美学","美术生"]');
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("accepting suggested_summary writes ai_summary and marks done", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("youtube", "yt1", { url: "https://x/1", title: "T" });
+      const s = new AIRepository(db).saveSuggestion({
+        collection_id: col.id,
+        suggestion_type: "suggested_summary",
+        payload: "这是一段 AI 摘要。",
+      });
+      manager.close();
+      const h = service.handlers();
+      expect((await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: s.id, status: "accepted" })))?.message_type).toBe("TASK_COMPLETE");
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const row = new CollectionRepository(verifier.getDb()).findById(col.id);
+      expect(row?.ai_summary).toBe("这是一段 AI 摘要。");
+      expect(row?.ai_status).toBe("done");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("AI_REVIEW_UNDO reverts accepted tag within 24h and restores pending", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv1", { url: "https://x/1", title: "T" });
+      const s = new AIRepository(db).saveSuggestion({ collection_id: col.id, suggestion_type: "suggested_tag", payload: '"生活美学"' });
+      manager.close();
+
+      const h = service.handlers();
+      await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: s.id, status: "accepted" }));
+      const undo = await h.AI_REVIEW_UNDO?.(makeMsg("AI_REVIEW_UNDO", { suggestion_id: s.id }));
+      expect(undo?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const vdb = verifier.getDb();
+      expect(new TagRepository(vdb).listCollectionsByTag("生活美学", "ai")).not.toContain(col.id);
+      expect(new AIRepository(vdb).findById(s.id)?.status).toBe("pending");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("AI_REVIEW_UNDO rejects suggestions accepted more than 24h ago", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv1", { url: "https://x/1", title: "T" });
+      const s = new AIRepository(db).saveSuggestion({ collection_id: col.id, suggestion_type: "suggested_tag", payload: "x" });
+      db.prepare("UPDATE ai_suggestions SET status='accepted', reviewed_at=datetime('now','-25 hours') WHERE id=?").run(s.id);
+      manager.close();
+      const res = await service.handlers().AI_REVIEW_UNDO?.(makeMsg("AI_REVIEW_UNDO", { suggestion_id: s.id }));
+      expect(res?.message_type).toBe("TASK_ERROR");
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("AI_REVIEW_LIST expires old pending and returns collection title", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv1", { url: "https://x/1", title: "我的收藏标题" });
+      const old = new AIRepository(db).saveSuggestion({ collection_id: col.id, suggestion_type: "suggested_tag", payload: "旧" });
+      db.prepare("UPDATE ai_suggestions SET created_at = datetime('now','-31 days') WHERE id = ?").run(old.id);
+      const fresh = new AIRepository(db).saveSuggestion({ collection_id: col.id, suggestion_type: "suggested_tag", payload: "新" });
+      manager.close();
+      const res = await service.handlers().AI_REVIEW_LIST?.(makeMsg("AI_REVIEW_LIST", {}));
+      const items = (res?.payload?.suggestions ?? []) as Array<{ id: string; collection_title?: string }>;
+      expect(items.find((i) => i.id === fresh.id)?.collection_title).toBe("我的收藏标题");
+      expect(items.find((i) => i.id === old.id)).toBeUndefined();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("rejecting a suggestion records user feedback", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv1", { url: "https://x/1", title: "T" });
+      const s = new AIRepository(db).saveSuggestion({ collection_id: col.id, suggestion_type: "suggested_tag", payload: "x" });
+      manager.close();
+      const res = await service.handlers().AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: s.id, status: "rejected" }));
+      expect(res?.message_type).toBe("TASK_COMPLETE");
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const fb = verifier.getDb().prepare("SELECT event_type, event_data FROM user_feedback WHERE collection_id = ?").all(col.id) as Array<{ event_type: string; event_data: string }>;
+      expect(fb.some((r) => r.event_type === "ai_tag_rejected" && JSON.parse(r.event_data).suggestion_id === s.id)).toBe(true);
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("TAG_LIST / TAG_ALIAS_ADD / TAG_MERGE / TAG_RENAME / TOPIC_LIST / TOPIC_RENAME handlers work", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const collections = new CollectionRepository(db);
+      const col = collections.upsertByPlatformItem("bilibili", "bv1", { url: "https://x/1", title: "T" });
+      const tags = new TagRepository(db);
+      const a = tags.ensureTag("生活美");
+      tags.bindTag(col.id, a.id, "platform");
+      tags.ensureTag("生活美学");
+      const topics = new TopicRepository(db);
+      const topic = topics.createTopic("设计", col.id);
+      topics.setStatus(topic.id, "accepted");
+      manager.close();
+
+      const h = service.handlers();
+      const listTags = await h.TAG_LIST?.(makeMsg("TAG_LIST", {}));
+      const tagRows = (listTags?.payload?.tags ?? []) as Array<{ name: string; count: number }>;
+      expect(tagRows.find((t) => t.name === "生活美")?.count).toBe(1);
+      expect((await h.TAG_ALIAS_ADD?.(makeMsg("TAG_ALIAS_ADD", { tag: "生活美", alias: "shm" })))?.message_type).toBe("TASK_COMPLETE");
+      expect((await h.TAG_MERGE?.(makeMsg("TAG_MERGE", { source: "生活美", target: "生活美学" })))?.message_type).toBe("TASK_COMPLETE");
+      expect((await h.TAG_RENAME?.(makeMsg("TAG_RENAME", { tag: "生活美学", next: "生活美学设计" })))?.message_type).toBe("TASK_COMPLETE");
+
+      const listTopics = await h.TOPIC_LIST?.(makeMsg("TOPIC_LIST", {}));
+      const topicRows = (listTopics?.payload?.topics ?? []) as Array<{ name: string; count: number }>;
+      expect(topicRows.find((t) => t.name === "设计")?.count).toBe(1);
+      expect((await h.TOPIC_RENAME?.(makeMsg("TOPIC_RENAME", { topic_id: topic.id, name: "设计思维" })))?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const vdb = verifier.getDb();
+      expect(new TagRepository(vdb).ensureTag("生活美").name).toBe("生活美学设计");
+      expect(new TopicRepository(vdb).findById(topic.id)?.name).toBe("设计思维");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("summary includes topics count", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv1", { url: "https://x/1", title: "T" });
+      const topics = new TopicRepository(db);
+      const t = topics.createTopic("主题", col.id);
+      topics.setStatus(t.id, "accepted");
+      manager.close();
+      const res = await service.handlers().STATUS_QUERY?.(makeMsg("STATUS_QUERY", { scope: "summary" }));
+      expect((res?.payload?.summary as { topics: number }).topics).toBe(1);
+    } finally {
+      service.dispose();
+    }
+  });
+
   it("TASK_ORGANIZE updates organize state and validates input", async () => {
     const dataDir = makeDataDir();
     const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   AiQueueProcessor,
   buildPrompt,
+  buildManualPrompt,
   inputHash,
+  parseTagPayload,
   parseSuggestions,
   type AiQueueDeps,
   type AIProvider,
@@ -115,5 +117,21 @@ describe("AiQueueProcessor", () => {
     expect(out).toHaveLength(1);
     expect(out[0].type).toBe("suggested_tag");
     expect(buildPrompt({ id: "x", collectionId: "x", title: "T", url: "https://u", author: "A" })).toContain("标题：T");
+  });
+
+  it("parseTagPayload handles JSON array, comma separated and single tag", () => {
+    expect(parseTagPayload('["生活美学","美术生"]')).toEqual(["生活美学", "美术生"]);
+    expect(parseTagPayload("生活美学, 美术生")).toEqual(["生活美学", "美术生"]);
+    expect(parseTagPayload("生活美学")).toEqual(["生活美学"]);
+    expect(parseTagPayload("")).toEqual([]);
+    expect(parseTagPayload('"生活美学"')).toEqual(["生活美学"]);
+    expect(parseTagPayload('{"tags":["前端","工程"]}')).toEqual(["前端", "工程"]);
+  });
+
+  it("buildManualPrompt includes existing tags for the AI tool", () => {
+    const item: QueueItemWithContent = { id: "x", collectionId: "c", title: "T", url: "https://u" };
+    const prompt = buildManualPrompt(item, ["生活美学", "AI"]);
+    expect(prompt).toContain("已有Tag：生活美学, AI");
+    expect(buildManualPrompt(item)).toContain("已有Tag：无");
   });
 });

@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { OmniMessage } from "@omni/shared-core";
 import type { AIProvider } from "@omni/ai";
-import { parseSuggestions } from "@omni/ai";
+import { parseSuggestions, parseTagPayload } from "@omni/ai";
 import {
   AIRepository,
   CollectionRepository,
@@ -84,6 +84,12 @@ export class TaskService {
       TASK_ORGANIZE: (msg) => this.organize(msg),
       TASK_TAG: (msg) => this.tag(msg),
       TASK_TOPIC: (msg) => this.topic(msg),
+      TAG_LIST: (msg) => this.tagList(msg),
+      TAG_ALIAS_ADD: (msg) => this.tagAliasAdd(msg),
+      TAG_MERGE: (msg) => this.tagMerge(msg),
+      TAG_RENAME: (msg) => this.tagRename(msg),
+      TOPIC_LIST: (msg) => this.topicList(msg),
+      TOPIC_RENAME: (msg) => this.topicRename(msg),
       TASK_PRIORITY: (msg) => this.priority(msg),
       TASK_INDEX: (msg) => this.index(msg),
       TASK_FETCH: (msg) => this.fetchText(msg),
@@ -92,6 +98,7 @@ export class TaskService {
       TASK_AI_MANUAL: (msg) => this.aiManual(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
+      AI_REVIEW_UNDO: (msg) => this.aiReviewUndo(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
     };
   }
@@ -145,7 +152,10 @@ export class TaskService {
   /** 列出待审核的 AI 建议。 */
   async aiReviewList(msg: OmniMessage): Promise<OmniMessage> {
     try {
-      const pending = new AIRepository(this.db).listPendingSuggestions();
+      const aiRepo = new AIRepository(this.db);
+      aiRepo.expireOldPending(30);
+      const pending = aiRepo.listPendingSuggestions();
+      const collections = new CollectionRepository(this.db);
       return complete(
         msg.request_id,
         {
@@ -153,8 +163,12 @@ export class TaskService {
           suggestions: pending.map((s) => ({
             id: s.id,
             collection_id: s.collection_id,
+            collection_title: collections.findById(s.collection_id)?.title ?? undefined,
             suggestion_type: s.suggestion_type,
             payload: s.payload ?? undefined,
+            status: s.status,
+            created_at: s.created_at,
+            reviewed_at: s.reviewed_at,
           })),
         },
       );
@@ -339,10 +353,11 @@ export class TaskService {
         const aiPending = this.db.prepare("SELECT COUNT(*) AS n FROM ai_suggestions WHERE status='pending'").get() as { n: number };
         const watchLater = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE save_type='watch_later'").get() as { n: number };
         const localFiles = this.db.prepare("SELECT COUNT(*) AS n FROM local_files WHERE content_status='active'").get() as { n: number };
+        const topics = this.db.prepare("SELECT COUNT(*) AS n FROM topics WHERE status='accepted'").get() as { n: number };
         return complete(msg.request_id, {
           task: "status_query",
           scope,
-          summary: { total: total.n, unorganized: unorganized.n, important: important.n, aiPending: aiPending.n, watchLater: watchLater.n, localFiles: localFiles.n },
+          summary: { total: total.n, unorganized: unorganized.n, important: important.n, aiPending: aiPending.n, watchLater: watchLater.n, localFiles: localFiles.n, topics: topics.n },
         });
       }
       return complete(msg.request_id, { task: "status_query", scope, ok: true });
@@ -399,6 +414,93 @@ export class TaskService {
       return complete(msg.request_id, { task: "topic", collection_id: collectionId, topic: row.name });
     } catch (err) {
       return error(msg.request_id, "TOPIC_001", `TOPIC_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** Tag Atlas 列表（PRD 16.2）：名称/数量/别名。 */
+  async tagList(msg: OmniMessage): Promise<OmniMessage> {
+    try {
+      const tags = new TagRepository(this.db).listTags();
+      return complete(msg.request_id, { task: "tag_list", tags });
+    } catch (err) {
+      return error(msg.request_id, "TAG_002", `TAG_002: ${(err as Error).message}`);
+    }
+  }
+
+  /** 为 Tag 添加别名（PRD 16.2）：任意别名搜索命中主 Tag 全部内容。 */
+  async tagAliasAdd(msg: OmniMessage): Promise<OmniMessage> {
+    const tag = String(msg.payload.tag ?? "").trim();
+    const alias = String(msg.payload.alias ?? "").trim();
+    if (!tag || !alias) {
+      return error(msg.request_id, "TAG_003", "TAG_003: invalid tag or alias");
+    }
+    try {
+      const tags = new TagRepository(this.db);
+      const row = tags.ensureTag(tag);
+      tags.addAlias(row.name, alias);
+      return complete(msg.request_id, { task: "tag_alias_add", tag: row.name, alias });
+    } catch (err) {
+      return error(msg.request_id, "TAG_003", `TAG_003: ${(err as Error).message}`);
+    }
+  }
+
+  /** 合并 Tag（去重核心操作）：source 全部并入 target。 */
+  async tagMerge(msg: OmniMessage): Promise<OmniMessage> {
+    const source = String(msg.payload.source ?? "").trim();
+    const target = String(msg.payload.target ?? "").trim();
+    if (!source || !target || source === target) {
+      return error(msg.request_id, "TAG_004", "TAG_004: invalid source or target");
+    }
+    try {
+      const tags = new TagRepository(this.db);
+      tags.mergeTags(source, target);
+      return complete(msg.request_id, { task: "tag_merge", source, target });
+    } catch (err) {
+      return error(msg.request_id, "TAG_004", `TAG_004: ${(err as Error).message}`);
+    }
+  }
+
+  /** 重命名 Tag；重名自动合并。 */
+  async tagRename(msg: OmniMessage): Promise<OmniMessage> {
+    const tag = String(msg.payload.tag ?? "").trim();
+    const next = String(msg.payload.next ?? "").trim();
+    if (!tag || !next) {
+      return error(msg.request_id, "TAG_005", "TAG_005: invalid tag or next");
+    }
+    try {
+      const tags = new TagRepository(this.db);
+      const row = tags.renameTag(tag, next);
+      return complete(msg.request_id, { task: "tag_rename", tag, next, canonical: row.name });
+    } catch (err) {
+      return error(msg.request_id, "TAG_005", `TAG_005: ${(err as Error).message}`);
+    }
+  }
+
+  /** Topic 列表（PRD 17.2）：成员数与状态。 */
+  async topicList(msg: OmniMessage): Promise<OmniMessage> {
+    try {
+      const topics = new TopicRepository(this.db).listTopicsWithCounts();
+      return complete(msg.request_id, { task: "topic_list", topics });
+    } catch (err) {
+      return error(msg.request_id, "TOPIC_002", `TOPIC_002: ${(err as Error).message}`);
+    }
+  }
+
+  /** 重命名 Topic。 */
+  async topicRename(msg: OmniMessage): Promise<OmniMessage> {
+    const topicId = String(msg.payload.topic_id ?? "");
+    const name = String(msg.payload.name ?? "").trim();
+    if (!topicId || !name) {
+      return error(msg.request_id, "TOPIC_003", "TOPIC_003: invalid topic_id or name");
+    }
+    try {
+      const topics = new TopicRepository(this.db);
+      const row = topics.findById(topicId);
+      if (!row) return error(msg.request_id, "TOPIC_003", "TOPIC_003: topic not found");
+      topics.renameTopic(topicId, name);
+      return complete(msg.request_id, { task: "topic_rename", topic_id: topicId, name });
+    } catch (err) {
+      return error(msg.request_id, "TOPIC_003", `TOPIC_003: ${(err as Error).message}`);
     }
   }
 
@@ -635,47 +737,156 @@ export class TaskService {
       if (!suggestion) {
         return error(msg.request_id, "AI_005", "AI_005: suggestion not found");
       }
+      let materialized: Record<string, unknown> | undefined;
       if (status === "accepted") {
-        await this.materializeAccepted(suggestion);
+        materialized = await this.materializeAccepted(suggestion);
       }
       aiRepo.updateSuggestionStatus(id, status as "accepted" | "rejected" | "expired");
+      // PRD 18 反馈闭环：接受/拒绝行为全部记录
+      const eventType =
+        status === "accepted"
+          ? this.acceptEventType(suggestion.suggestion_type)
+          : this.rejectEventType(suggestion.suggestion_type);
+      if (eventType) {
+        aiRepo.recordFeedback(suggestion.collection_id, eventType, {
+          suggestion_id: id,
+          suggestion_type: suggestion.suggestion_type,
+          payload: suggestion.payload ?? undefined,
+          ...(materialized ?? {}),
+        });
+      }
       return complete(msg.request_id, { task: "ai_review_update", suggestion_id: id, status });
     } catch (err) {
       return error(msg.request_id, "AI_005", `AI_005: ${(err as Error).message}`);
     }
   }
 
-  /** 接受建议后落地：分组 / Topic / Tag。 */
+  private acceptEventType(type: string): string | null {
+    return (
+      {
+        suggested_tag: "ai_tag_accepted",
+        suggested_topic: "ai_topic_accepted",
+        suggested_summary: "ai_summary_accepted",
+        suggested_group: "ai_group_accepted",
+      } as Record<string, string | undefined>
+    )[type] ?? null;
+  }
+
+  private rejectEventType(type: string): string | null {
+    return (
+      {
+        suggested_tag: "ai_tag_rejected",
+        suggested_topic: "ai_topic_rejected",
+        suggested_summary: "ai_summary_rejected",
+        suggested_group: "ai_group_rejected",
+      } as Record<string, string | undefined>
+    )[type] ?? null;
+  }
+
+  /** 接受建议后落地：分组 / Topic / Tag / 摘要，返回撤销所需事件数据。 */
   private async materializeAccepted(suggestion: {
     suggestion_type: string;
     payload?: string | null;
     collection_id: string;
-  }): Promise<void> {
+  }): Promise<Record<string, unknown>> {
     const payload = suggestion.payload ?? "";
     switch (suggestion.suggestion_type) {
       case "suggested_group": {
-        new ContentGroupService({
+        const result = new ContentGroupService({
           groups: new ContentGroupRepository(this.db),
           collections: new CollectionRepository(this.db),
           ai: new AIRepository(this.db),
         }).materializeSuggestion(payload);
-        break;
+        return { group_id: result.groupId };
       }
       case "suggested_topic": {
         const topics = new TopicRepository(this.db);
-        const topic = topics.findByName(payload) ?? topics.createTopic(payload, suggestion.collection_id);
+        const topic =
+          topics.findByName(payload.trim()) ??
+          topics.createTopic(payload.trim(), suggestion.collection_id);
         topics.addCollection(topic.id, suggestion.collection_id);
         topics.setStatus(topic.id, "accepted");
-        break;
+        return { topic_id: topic.id };
       }
       case "suggested_tag": {
         const tags = new TagRepository(this.db);
-        const tag = tags.ensureTag(payload);
-        tags.bindTag(suggestion.collection_id, tag.id, "ai");
-        break;
+        const tagNames = parseTagPayload(payload);
+        const tagIds: string[] = [];
+        for (const name of tagNames) {
+          const tag = tags.ensureTag(name);
+          tags.bindTag(suggestion.collection_id, tag.id, "ai");
+          tagIds.push(tag.id);
+        }
+        return { tag_ids: tagIds };
+      }
+      case "suggested_summary": {
+        this.db
+          .prepare("UPDATE collections SET ai_summary = ?, ai_status = 'done', updated_at = datetime('now') WHERE id = ?")
+          .run(payload, suggestion.collection_id);
+        return { summary: payload };
       }
       default:
-        break;
+        return {};
+    }
+  }
+
+  /** 撤销已确认建议（24 小时内，SPEC S9.2 / PRD 19.2）。 */
+  async aiReviewUndo(msg: OmniMessage): Promise<OmniMessage> {
+    const id = String(msg.payload.suggestion_id ?? "");
+    if (!id) return error(msg.request_id, "AI_007", "AI_007: missing suggestion_id");
+    try {
+      const aiRepo = new AIRepository(this.db);
+      const suggestion = aiRepo.findById(id);
+      if (!suggestion || suggestion.status !== "accepted") {
+        return error(msg.request_id, "AI_007", "AI_007: suggestion not accepted or not found");
+      }
+      const reviewedAt = suggestion.reviewed_at
+        ? new Date(String(suggestion.reviewed_at).replace(" ", "T") + "Z").getTime()
+        : 0;
+      if (!reviewedAt || Date.now() - reviewedAt > 24 * 3600 * 1000) {
+        return error(msg.request_id, "AI_007", "AI_007: 已超过 24 小时，无法撤销");
+      }
+      const feedbacks = this.db
+        .prepare(
+          "SELECT event_type, event_data FROM user_feedback WHERE collection_id = ? AND event_type LIKE 'ai\\_%\\_accepted' ESCAPE '\\'",
+        )
+        .all(suggestion.collection_id) as Array<{ event_type: string; event_data: string }>;
+      const feedback = feedbacks.find((f) => {
+        try {
+          return (JSON.parse(f.event_data) as { suggestion_id?: string }).suggestion_id === id;
+        } catch {
+          return false;
+        }
+      });
+      if (!feedback) {
+        return error(msg.request_id, "AI_007", "AI_007: 未找到撤销所需反馈记录");
+      }
+      const data = JSON.parse(feedback.event_data) as Record<string, unknown>;
+      const topics = new TopicRepository(this.db);
+      const groups = new ContentGroupRepository(this.db);
+      if (feedback.event_type === "ai_tag_accepted" && Array.isArray(data.tag_ids)) {
+        const placeholders = (data.tag_ids as string[]).map(() => "?").join(",");
+        this.db
+          .prepare(
+            `DELETE FROM content_tags
+             WHERE collection_id = ? AND source = 'ai' AND tag_id IN (${placeholders})`,
+          )
+          .run(suggestion.collection_id, ...(data.tag_ids as string[]));
+      } else if (feedback.event_type === "ai_topic_accepted" && typeof data.topic_id === "string") {
+        topics.removeCollection(data.topic_id, suggestion.collection_id);
+      } else if (feedback.event_type === "ai_summary_accepted") {
+        this.db
+          .prepare("UPDATE collections SET ai_summary = NULL, ai_status = NULL, updated_at = datetime('now') WHERE id = ?")
+          .run(suggestion.collection_id);
+      } else if (feedback.event_type === "ai_group_accepted" && typeof data.group_id === "string") {
+        const bound = groups.listCollectionsInGroup(data.group_id).map((c) => c.id);
+        for (const cid of bound) groups.unbindCollection(cid);
+        groups.deleteGroup(data.group_id);
+      }
+      aiRepo.updateSuggestionStatus(id, "pending");
+      return complete(msg.request_id, { task: "ai_review_undo", suggestion_id: id });
+    } catch (err) {
+      return error(msg.request_id, "AI_007", `AI_007: ${(err as Error).message}`);
     }
   }
 

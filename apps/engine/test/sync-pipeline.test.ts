@@ -10,6 +10,7 @@ import {
   CommentRepository,
   RuleCenter,
   SyncLogRepository,
+  TagRepository,
 } from "@omni/database";
 import { BaseAdapter, type CollectionDetail, type CollectionRaw, type SyncCursor, type UniversalCollection } from "@omni/adapters";
 import { SyncPipeline } from "../src/index.js";
@@ -142,5 +143,37 @@ describe("SyncPipeline", () => {
     const queued = manager.getDb().prepare("SELECT COUNT(*) AS n FROM ai_queue WHERE status='queued'").get();
     expect((queued as { n: number }).n).toBe(12);
     rulesCenter.set("ai_enabled", "false");
+  });
+
+  it("extracts platform hashtags into tags with source=platform", async () => {
+    const db = manager.getDb();
+    const adapter = new FakeAdapter();
+    adapter.fetchCatalog = async () => [
+      {
+        platformItemId: "BV-hashtag-1",
+        url: "https://example.com/video/BV-hashtag-1",
+        title: "桌搭推荐#生活美学 #桌搭好物",
+        author: "UP",
+        collectedAt: "2026-02-01T00:00:00Z",
+        saveType: "favorited" as const,
+      },
+    ];
+    const p = new SyncPipeline({
+      getAdapter: () => adapter,
+      collections: new CollectionRepository(db),
+      comments: new CommentRepository(db),
+      accounts: new AccountRepository(db),
+      rules: rulesCenter,
+      logs: new SyncLogRepository(db),
+      ai: new AIRepository(db),
+      tags: new TagRepository(db),
+    });
+    const report = await p.run("fake", "catalog");
+    expect(report.status).toBe("success");
+    const tags = new TagRepository(db);
+    const names = tags.listTags().map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(["生活美学", "桌搭好物"]));
+    const col = collections.findByUrl("https://example.com/video/BV-hashtag-1");
+    expect(tags.listCollectionsByTag("生活美学", "platform")).toContain((col as { id: string }).id);
   });
 });

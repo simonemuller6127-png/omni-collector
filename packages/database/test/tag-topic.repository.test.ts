@@ -149,4 +149,17 @@ describe("TopicRepository", () => {
       cleanup();
     }
   });
+
+  it("removes a collection from topic membership", () => {
+    const { db, cleanup } = setup();
+    try {
+      const topics = new TopicRepository(db);
+      const t = topics.createTopic("主题", "c1");
+      topics.addCollection(t.id, "c2");
+      topics.removeCollection(t.id, "c1");
+      expect(JSON.parse(topics.findById(t.id)?.collection_ids ?? "[]")).toEqual(["c2"]);
+    } finally {
+      cleanup();
+    }
+  });
 });

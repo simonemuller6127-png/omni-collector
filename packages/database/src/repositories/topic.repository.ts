@@ -52,6 +52,23 @@ export class TopicRepository {
       .run(JSON.stringify([...ids]), topicId);
   }
 
+  removeCollection(topicId: string, collectionId: string): void {
+    const topic = this.findById(topicId);
+    if (!topic) return;
+    let ids: string[] = [];
+    try {
+      ids = JSON.parse(topic.collection_ids ?? "[]") as string[];
+    } catch {
+      ids = [];
+    }
+    const next = ids.filter((id) => id !== collectionId);
+    this.db
+      .prepare(
+        "UPDATE topics SET collection_ids = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .run(JSON.stringify(next), topicId);
+  }
+
   setStatus(topicId: string, status: TopicRow["status"]): void {
     this.db
       .prepare("UPDATE topics SET status = ?, updated_at = datetime('now') WHERE id = ?")

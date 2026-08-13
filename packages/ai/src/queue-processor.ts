@@ -75,14 +75,51 @@ export function buildPrompt(item: QueueItemWithContent): string {
     .join("\n");
 }
 
+/** 解析 suggested_tag 的 payload：JSON 数组 / 逗号分隔 / 单个标签。 */
+export function parseTagPayload(payload: string): string[] {
+  const trimmed = (payload ?? "").trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("{") || trimmed.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map((v) => String(v).trim()).filter(Boolean);
+      }
+      if (typeof parsed === "string") {
+        return [parsed.trim()].filter(Boolean);
+      }
+      if (parsed && Array.isArray(parsed.tags)) {
+        return parsed.tags.map((v: unknown) => String(v).trim()).filter(Boolean);
+      }
+    } catch {
+      // 落入逗号分隔兜底
+    }
+  }
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+    return parsed.map((v) => String(v).trim()).filter(Boolean);
+      }
+    } catch {
+      // 落入逗号分隔兜底
+    }
+  }
+  return trimmed
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /** Manual 模式提示词模板（PRD 19.3）：用户复制到任意 AI 工具，粘贴回复后回填。 */
-export function buildManualPrompt(item: QueueItemWithContent): string {
+export function buildManualPrompt(item: QueueItemWithContent, existingTags: string[] = []): string {
   return [
     "你是收藏整理助手。根据下面的收藏内容，输出 JSON 数组，元素结构：",
     '{"type":"suggested_tag|suggested_topic|suggested_summary|suggested_group","payload":"...","confidence":0-1}。',
     "suggested_tag 的 payload 为字符串数组 JSON；suggested_topic 为单个主题字符串；",
     "suggested_summary 为 1-2 句摘要字符串；suggested_group 为收藏分组名。只输出 JSON，不要额外解释。",
     "",
+    `已有Tag：${existingTags.length > 0 ? existingTags.join(", ") : "无"}`,
     "--- 收藏内容 ---",
     buildPrompt(item),
   ].join("\n");

@@ -8,6 +8,7 @@ import {
   MigrationManager,
   RuleCenter,
   SyncLogRepository,
+  TagRepository,
 } from "@omni/database";
 import {
   BaseAdapter,
@@ -89,6 +90,7 @@ export class SyncRunner {
         rules,
         logs: new SyncLogRepository(db),
         ai: new AIRepository(db),
+        tags: new TagRepository(db),
       });
       // 指纹绑定平台（如 MakerWorld 的 Cloudflare 会话）需复用持久化 Profile
       const profileDir = sessions.profileDir(platform);

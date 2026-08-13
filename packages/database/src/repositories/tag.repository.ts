@@ -139,7 +139,7 @@ export class TagRepository {
     const base = `SELECT ct.collection_id FROM content_tags ct
          JOIN tags t ON t.id = ct.tag_id
          WHERE (t.name = ? OR EXISTS (SELECT 1 FROM tag_aliases a WHERE a.tag_id = t.id AND a.alias = ?))`;
-    const sql = source ? `${base} AND ct.source = ?` : base;
+    const sql = `${source ? `${base} AND ct.source = ?` : base} ORDER BY ct.collection_id ASC`;
     const rows = (
       source ? this.db.prepare(sql).all(name, name, source) : this.db.prepare(sql).all(name, name)
     ) as Array<{ collection_id: string }>;
