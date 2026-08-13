@@ -13,6 +13,14 @@ export interface TopicRow {
   updated_at: string;
 }
 
+export interface TopicStat {
+  id: string;
+  name: string;
+  status: TopicRow["status"];
+  count: number;
+  collection_ids: string[];
+}
+
 /**
  * Topic 仓储（Phase 6：Topic 生成落地）：
  * topics 表，collection_ids 以 JSON 数组存储；status 走 pending -> accepted 审核流。
@@ -74,7 +82,27 @@ export class TopicRepository {
     });
   }
 
-  private findById(id: string): TopicRow | undefined {
+  findById(id: string): TopicRow | undefined {
     return this.db.prepare("SELECT * FROM topics WHERE id = ?").get(id) as TopicRow | undefined;
+  }
+
+  listTopicsWithCounts(): TopicStat[] {
+    return this.listTopics().map((t) => {
+      let ids: string[] = [];
+      try {
+        ids = JSON.parse(t.collection_ids ?? "[]") as string[];
+      } catch {
+        ids = [];
+      }
+      return { id: t.id, name: t.name, status: t.status, count: ids.length, collection_ids: ids };
+    });
+  }
+
+  renameTopic(topicId: string, name: string): void {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    this.db
+      .prepare("UPDATE topics SET name = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(trimmed, topicId);
   }
 }

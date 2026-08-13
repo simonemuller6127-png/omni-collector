@@ -91,4 +91,27 @@ describe("AIRepository", () => {
     ai.updateSuggestionStatus(s1.id, "accepted");
     expect(ai.findSuggestionByHash("hash-1")?.status).toBe("accepted");
   });
+
+  it("records user feedback events", () => {
+    const cid = collectionId();
+    ai.recordFeedback(cid, "ai_tag_accepted", { suggestion_id: "s1", tag_ids: ["t1"] });
+    ai.recordFeedback(cid, "ai_tag_rejected", { suggestion_id: "s2" });
+    const rows = manager.getDb().prepare("SELECT * FROM user_feedback WHERE collection_id = ? ORDER BY created_at").all(cid) as Array<{
+      event_type: string;
+      event_data: string;
+    }>;
+    expect(rows.map((r) => r.event_type)).toEqual(["ai_tag_accepted", "ai_tag_rejected"]);
+    expect(JSON.parse(rows[0].event_data)).toEqual({ suggestion_id: "s1", tag_ids: ["t1"] });
+  });
+
+  it("expires old pending suggestions beyond retention days", () => {
+    const cid = collectionId();
+    const old = ai.saveSuggestion({ collection_id: cid, suggestion_type: "suggested_tag", payload: "x" });
+    manager.getDb().prepare("UPDATE ai_suggestions SET created_at = datetime('now','-31 days') WHERE id = ?").run(old.id);
+    const fresh = ai.saveSuggestion({ collection_id: cid, suggestion_type: "suggested_tag", payload: "y" });
+    expect(ai.expireOldPending(30)).toBe(1);
+    const status = manager.getDb().prepare("SELECT status FROM ai_suggestions WHERE id = ?").get(old.id) as { status: string };
+    expect(status.status).toBe("expired");
+    expect(manager.getDb().prepare("SELECT status FROM ai_suggestions WHERE id = ?").get(fresh.id) as { status: string }).toMatchObject({ status: "pending" });
+  });
 });

@@ -100,6 +100,27 @@ export class AIRepository {
     return (limit ? this.db.prepare(sql).all(limit) : this.db.prepare(sql).all()) as AiSuggestionRow[];
   }
 
+  /** 过期 30 天以上未审核建议（SPEC S9.2）。返回过期条数。 */
+  expireOldPending(days: number): number {
+    const res = this.db
+      .prepare(
+        `UPDATE ai_suggestions
+         SET status = 'expired', reviewed_at = datetime('now')
+         WHERE status = 'pending' AND created_at < datetime('now', ?)`,
+      )
+      .run(`-${Math.max(1, Math.floor(days))} days`);
+    return res.changes;
+  }
+
+  /** 记录用户反馈事件（PRD 18，v1.0 数据资产）。 */
+  recordFeedback(collectionId: string, eventType: string, eventData: Record<string, unknown>): void {
+    this.db
+      .prepare(
+        "INSERT INTO user_feedback (id, collection_id, event_type, event_data, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+      )
+      .run(randomUUID(), collectionId, eventType, JSON.stringify(eventData));
+  }
+
   findById(id: string): AiSuggestionRow | undefined {
     return this.db.prepare("SELECT * FROM ai_suggestions WHERE id = ?").get(id) as
       | AiSuggestionRow

@@ -33,3 +33,32 @@ export interface UserZone {
   rating?: string;
   priority?: string;
 }
+
+/** Tag Atlas 条目（PRD 16）：规范化名称 + 别名 + 使用量。 */
+export interface TagDTO {
+  id: string;
+  name: string;
+  count: number;
+  aliases: string[];
+}
+
+/** Topic 条目（PRD 17）：主题聚合 + 状态 + 成员数。 */
+export interface TopicDTO {
+  id: string;
+  name: string;
+  status: "pending" | "accepted" | "rejected";
+  count: number;
+  collection_ids?: string[];
+}
+
+/** AI 建议条目（SPEC S9.2）：待审核/已审面板展示。 */
+export interface AiSuggestionDTO {
+  id: string;
+  collection_id: string;
+  collection_title?: string;
+  suggestion_type: string;
+  payload?: string;
+  status: "pending" | "accepted" | "rejected" | "expired";
+  created_at: string;
+  reviewed_at?: string | null;
+}
