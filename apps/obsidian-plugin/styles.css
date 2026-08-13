@@ -401,3 +401,90 @@
   flex: 1;
   font-size: 0.9em;
 }
+
+/* Tag/Topic 管理与 AI 审核增强 */
+.omni-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.omni-hint {
+  font-size: 0.78em;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.omni-tag-topic {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  height: 100%;
+}
+.omni-title-tag {
+  color: var(--text-accent);
+}
+.omni-topic-member {
+  font-size: 0.82em;
+  color: var(--text-normal);
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.omni-topic-member:hover {
+  background: var(--background-secondary);
+}
+.omni-dupe-box {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--background-secondary);
+}
+.omni-dupe-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.omni-dupe-name {
+  flex: 1;
+  font-size: 0.85em;
+}
+.omni-ai-row {
+  align-items: flex-start;
+}
+.omni-ai-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.omni-ai-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.omni-ai-title {
+  font-size: 0.88em;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omni-ai-text {
+  font-size: 0.85em;
+  color: var(--text-normal);
+  white-space: pre-wrap;
+}
+.omni-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.omni-act-ghost {
+  background: transparent;
+  color: var(--text-muted);
+}

@@ -7,6 +7,8 @@ export interface OmniController {
   openCollectionList(platform?: string): Promise<void>;
   openCollectionDetail(collectionId: string): Promise<void>;
   openAiReview(): Promise<void>;
+  openTagTopic(): Promise<void>;
+  openManualAI(): Promise<void>;
   openSettings(): Promise<void>;
   startEngine(): Promise<void>;
   stopEngine(): Promise<void>;
@@ -117,6 +119,8 @@ export class OmniSidebarView extends ItemView {
     this.addActionButton(contentRow, "生成 Markdown", () => this.withBusy(async () => { await this.ctrl.generateMarkdown(); }));
     this.addActionButton(contentRow, "分组识别", () => this.withBusy(async () => { await this.ctrl.runGroupRecognition(); }));
     this.addActionButton(contentRow, "AI 建议审核", () => this.ctrl.openAiReview());
+    this.addActionButton(contentRow, "Tag/Topic 管理", () => this.ctrl.openTagTopic());
+    this.addActionButton(contentRow, "Manual AI 模板", () => this.ctrl.openManualAI());
     this.addActionButton(contentRow, "扫描本地文件", () => this.withBusy(async () => { await this.ctrl.scanLocalFiles(); }));
 
     container
@@ -150,7 +154,7 @@ export class OmniSidebarView extends ItemView {
         this.totalEl.setText(`已同步 ${total} 条收藏`);
         const summary = await this.engine.getSummary().catch(() => null);
         if (summary) {
-          this.summaryEl.setText(`未整理 ${summary.unorganized} · 重要/项目 ${summary.important} · 稍后再看 ${summary.watchLater} · 待审 AI ${summary.aiPending} · 本地文件 ${summary.localFiles}`);
+          this.summaryEl.setText(`未整理 ${summary.unorganized} · 重要/项目 ${summary.important} · 稍后再看 ${summary.watchLater} · 待审 AI ${summary.aiPending} · Topic ${summary.topics} · 本地文件 ${summary.localFiles}`);
         }
       } catch {
         // 状态查询失败不覆盖连接状态

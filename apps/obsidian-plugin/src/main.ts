@@ -6,9 +6,11 @@ import { OmniSettingTab } from "./settings-tab.js";
 import { EngineClient } from "./comm/socket-client.js";
 import { OmniSidebarView, VIEW_TYPE_OMNI, type OmniController } from "./ui/sidebar.js";
 import { OmniAiReviewView, VIEW_TYPE_OMNI_AI, type AiReviewSource } from "./ui/ai-review.js";
+import { OmniTagTopicView, VIEW_TYPE_OMNI_TAGS, type TagTopicSource } from "./ui/tag-topic.js";
 import { OmniCollectionListView, VIEW_TYPE_OMNI_LIST, type ListDataSource } from "./ui/collection-list.js";
 import { OmniCollectionDetailView, VIEW_TYPE_OMNI_DETAIL, type DetailDataSource } from "./ui/collection-detail.js";
-import { MarkdownBuilder } from "./markdown/markdown-builder.js";
+import { MarkdownBuilder, sanitizeFilename } from "./markdown/markdown-builder.js";
+import { openManualAIModal } from "./ui/manual-ai.js";
 
 export default class OmniCollectorPlugin extends Plugin {
   pluginSettings!: OmniSettings;
@@ -86,8 +88,24 @@ export default class OmniCollectorPlugin extends Plugin {
       const source: AiReviewSource = {
         listPending: () => this.engine.listAiSuggestions(),
         review: (id, status) => this.engine.reviewAiSuggestion(id, status).then(() => undefined),
+        undo: (id) => this.engine.undoAiSuggestion(id).then(() => undefined),
+        openManualAI: () => void this.openManualAIPicker(),
       };
       return new OmniAiReviewView(leaf, source);
+    });
+    this.registerView(VIEW_TYPE_OMNI_TAGS, (leaf) => {
+      const source: TagTopicSource = {
+        listTags: () => this.engine.listTags(),
+        addAlias: (tag, alias) => this.engine.addTagAlias(tag, alias).then(() => undefined),
+        mergeTags: (sourceTag, target) => this.engine.mergeTags(sourceTag, target).then(() => undefined),
+        renameTag: (tag, next) => this.engine.renameTag(tag, next).then(() => undefined),
+        listTopics: () => this.engine.listTopics(),
+        renameTopic: (id, name) => this.engine.renameTopic(id, name).then(() => undefined),
+        listCollections: () => this.engine.listCollections(),
+        openDetail: (id) => this.openCollectionDetail(id),
+        refreshMarkdown: () => this.generateCollectionMarkdown(),
+      };
+      return new OmniTagTopicView(leaf, source);
     });
     this.addSettingTab(new OmniSettingTab(this.app, this));
     this.addCommand({
@@ -95,6 +113,20 @@ export default class OmniCollectorPlugin extends Plugin {
       name: "打开 AI 建议审核",
       callback: () => {
         void this.openAiReviewView();
+      },
+    });
+    this.addCommand({
+      id: "open-tag-topic-manager",
+      name: "打开 Tag/Topic 管理",
+      callback: () => {
+        void this.openTagTopicView();
+      },
+    });
+    this.addCommand({
+      id: "open-manual-ai",
+      name: "Manual AI 模板（选择收藏）",
+      callback: () => {
+        void this.openManualAIPicker();
       },
     });
     this.addCommand({
@@ -255,6 +287,8 @@ export default class OmniCollectorPlugin extends Plugin {
       openCollectionList: (platform?: string) => this.openCollectionList(platform),
       openCollectionDetail: (id: string) => this.openCollectionDetail(id),
       openAiReview: () => this.openAiReviewView(),
+      openTagTopic: () => this.openTagTopicView(),
+      openManualAI: () => this.openManualAIPicker(),
       openSettings: () => this.openSettingsTab(),
       startEngine: async () => {
         await this.engine.startEngine("query");
@@ -367,6 +401,35 @@ export default class OmniCollectorPlugin extends Plugin {
         // 跳过单个文件写入失败
       }
     }
+    // Topic 聚合页（PRD 17 / 关系图谱联动）
+    const topics = await this.engine.listTopics().catch(() => []);
+    if (topics.length > 0) {
+      const topicDir = `${folder}/Topics`;
+      if (!(await vault.adapter.exists(topicDir))) {
+        await vault.createFolder(topicDir).catch(() => {});
+      }
+      const byId = new Map(collections.map((c) => [c.id, c]));
+      for (const topic of topics) {
+        const links = (topic.collection_ids ?? [])
+          .map((id) => {
+            const dto = byId.get(id);
+            if (!dto) return "";
+            return `Omni Collector/${dto.platform}/${sanitizeFilename(dto.title || dto.platformItemId)}`;
+          })
+          .filter(Boolean);
+        const hubPath = `${topicDir}/${sanitizeFilename(topic.name)}.md`;
+        try {
+          const content = builder.buildTopicHub(topic.name, links);
+          if (await vault.adapter.exists(hubPath)) {
+            await vault.adapter.write(hubPath, content);
+          } else {
+            await vault.create(hubPath, content);
+          }
+        } catch {
+          // 单个 Topic 页失败不中断
+        }
+      }
+    }
     new Notice(`Omni Collector: 已生成/更新 ${count} 个 Markdown`);
   }
 
@@ -402,6 +465,54 @@ export default class OmniCollectorPlugin extends Plugin {
       if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_AI, active: true });
     }
     if (leaf) workspace.revealLeaf(leaf);
+  }
+
+  private async openTagTopicView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(VIEW_TYPE_OMNI_TAGS)[0] ?? null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_TAGS, active: true });
+    }
+    if (leaf) workspace.revealLeaf(leaf);
+  }
+
+  /** Manual AI 全局入口：先选收藏，再打开模板（PRD 19.3）。 */
+  private async openManualAIPicker(): Promise<void> {
+    const collections = await this.engine.listCollections().catch(() => []);
+    const modal = new Modal(this.app);
+    modal.titleEl.setText("选择收藏（Manual AI 模板）");
+    const search = modal.contentEl.createEl("input", {
+      type: "text",
+      placeholder: "搜索标题…",
+      attr: { style: "width:100%;margin-bottom:8px;" },
+    });
+    const list = modal.contentEl.createEl("div", {
+      cls: "omni-list",
+      attr: { style: "max-height:60vh;overflow:auto;" },
+    });
+    const render = (keyword = ""): void => {
+      list.empty();
+      const filtered = collections
+        .filter((c) => (c.title || "").toLowerCase().includes(keyword.toLowerCase()))
+        .slice(0, 100);
+      for (const c of filtered) {
+        const row = list.createEl("div", { cls: "omni-row" });
+        row.createEl("span", { text: c.title || c.id, cls: "omni-title" });
+        row.addEventListener("click", () => {
+          modal.close();
+          openManualAIModal(this.app, c, {
+            submit: (id, reply) => this.engine.submitManualAI(id, reply).then(() => undefined),
+          });
+        });
+      }
+      if (filtered.length === 0) {
+        list.createEl("div", { text: "无匹配收藏", cls: "omni-empty" });
+      }
+    };
+    search.addEventListener("input", () => render(search.value));
+    render();
+    modal.open();
   }
 
   private async openSettingsTab(): Promise<void> {

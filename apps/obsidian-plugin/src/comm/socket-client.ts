@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { WebSocket, type RawData } from "ws";
 import type { OmniMessage, OmniMessageType } from "@omni/shared-core";
-import { validateOmniMessage } from "@omni/shared-core";
+import { validateOmniMessage, type TagDTO, type TopicDTO } from "@omni/shared-core";
 
 export interface EngineClientOptions {
   pipePath: string;
@@ -226,14 +226,34 @@ export class EngineClient {
   }
 
   /** 列出待审核 AI 建议。 */
-  async listAiSuggestions(): Promise<Array<{ id: string; collection_id: string; suggestion_type: string; payload?: string }>> {
+  async listAiSuggestions(): Promise<
+    Array<{
+      id: string;
+      collection_id: string;
+      collection_title?: string;
+      suggestion_type: string;
+      payload?: string;
+      status?: string;
+      created_at?: string;
+      reviewed_at?: string | null;
+    }>
+  > {
     const res = await this.request({
       request_id: randomUUID(),
       timestamp: new Date().toISOString(),
       message_type: "AI_REVIEW_LIST",
       payload: {},
     });
-    return (res.payload?.suggestions as Array<{ id: string; collection_id: string; suggestion_type: string; payload?: string }>) ?? [];
+    return (res.payload?.suggestions as Array<{
+      id: string;
+      collection_id: string;
+      collection_title?: string;
+      suggestion_type: string;
+      payload?: string;
+      status?: string;
+      created_at?: string;
+      reviewed_at?: string | null;
+    }>) ?? [];
   }
 
   /** 审核建议：accepted / rejected。 */
@@ -243,6 +263,16 @@ export class EngineClient {
       timestamp: new Date().toISOString(),
       message_type: "AI_REVIEW_UPDATE",
       payload: { suggestion_id: id, status },
+    });
+  }
+
+  /** 撤销已确认的 AI 建议（24 小时内，SPEC S9.2）。 */
+  async undoAiSuggestion(id: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "AI_REVIEW_UNDO",
+      payload: { suggestion_id: id },
     });
   }
 
@@ -322,6 +352,68 @@ export class EngineClient {
     });
   }
 
+  /** Tag Atlas 列表（PRD 16.2）。 */
+  async listTags(): Promise<TagDTO[]> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TAG_LIST",
+      payload: {},
+    });
+    return (res.payload?.tags as TagDTO[]) ?? [];
+  }
+
+  /** 为 Tag 添加别名。 */
+  async addTagAlias(tag: string, alias: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TAG_ALIAS_ADD",
+      payload: { tag, alias },
+    });
+  }
+
+  /** 合并 Tag（source 并入 target）。 */
+  async mergeTags(source: string, target: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TAG_MERGE",
+      payload: { source, target },
+    });
+  }
+
+  /** 重命名 Tag（重名自动合并）。 */
+  async renameTag(tag: string, next: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TAG_RENAME",
+      payload: { tag, next },
+    });
+  }
+
+  /** Topic 列表（PRD 17）。 */
+  async listTopics(): Promise<TopicDTO[]> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TOPIC_LIST",
+      payload: {},
+    });
+    return (res.payload?.topics as TopicDTO[]) ?? [];
+  }
+
+  /** 重命名 Topic。 */
+  async renameTopic(topicId: string, name: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TOPIC_RENAME",
+      payload: { topic_id: topicId, name },
+    });
+  }
+
   /** 用户手动把收藏归入 Topic。 */
   async addTopic(collectionId: string, topic: string): Promise<OmniMessage> {
     return this.request({
@@ -389,15 +481,15 @@ export class EngineClient {
   }
 
   /** 查询汇总统计。 */
-  async getSummary(): Promise<{ total: number; unorganized: number; important: number; aiPending: number; watchLater: number; localFiles: number }> {
+  async getSummary(): Promise<{ total: number; unorganized: number; important: number; aiPending: number; watchLater: number; localFiles: number; topics: number }> {
     const res = await this.request({
       request_id: randomUUID(),
       timestamp: new Date().toISOString(),
       message_type: "STATUS_QUERY",
       payload: { scope: "summary" },
     });
-    return (res.payload?.summary as { total: number; unorganized: number; important: number; aiPending: number; watchLater: number; localFiles: number }) ?? {
-      total: 0, unorganized: 0, important: 0, aiPending: 0, watchLater: 0, localFiles: 0,
+    return (res.payload?.summary as { total: number; unorganized: number; important: number; aiPending: number; watchLater: number; localFiles: number; topics: number }) ?? {
+      total: 0, unorganized: 0, important: 0, aiPending: 0, watchLater: 0, localFiles: 0, topics: 0,
     };
   }
 
