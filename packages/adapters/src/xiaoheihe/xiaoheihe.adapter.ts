@@ -181,14 +181,18 @@ export class XiaoheiheAdapter extends BaseAdapter {
         timeout: 90000,
       });
       await page.waitForTimeout(10000);
-      // 循环滚动分页：直到收藏 API 不再返回新数据（上限 6 轮）
-      for (let round = 0; round < 6; round += 1) {
+      // 循环滚动到底部触发分页：以 DOM 卡片数增长判断（上限 15 轮，覆盖 247+ 条）
+      for (let round = 0; round < 15; round += 1) {
         if (page.isClosed()) break;
-        const before = captured.flatMap((j) => parseXhhFavoritePayload(j)).length;
-        await page.mouse.wheel(0, 2200);
+        const before = await page
+          .evaluate(() => document.querySelectorAll("a[href*='/app/bbs/link/']").length)
+          .catch(() => 0);
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
         await this.withRandomDelay(1200, 3000);
-        const after = captured.flatMap((j) => parseXhhFavoritePayload(j)).length;
-        if (after === before) break;
+        const after = await page
+          .evaluate(() => document.querySelectorAll("a[href*='/app/bbs/link/']").length)
+          .catch(() => 0);
+        if (after <= before) break;
       }
 
       const items = captured.flatMap((j) => parseXhhFavoritePayload(j));
@@ -199,7 +203,7 @@ export class XiaoheiheAdapter extends BaseAdapter {
           title: it.title || "小黑盒收藏",
           author: it.author,
           coverUrl: it.coverUrl,
-          collectedAt: it.collectedAt,
+          collectedAt: it.collectedAt ?? new Date().toISOString(),
           saveType: "favorited" as const,
           extra: {
             contentType: it.contentType,
@@ -239,6 +243,7 @@ export class XiaoheiheAdapter extends BaseAdapter {
       title: it.title || "小黑盒收藏",
       author: it.author,
       coverUrl: it.cover,
+      collectedAt: new Date().toISOString(),
       saveType: "favorited" as const,
       extra: { contentType: "post" },
     }));

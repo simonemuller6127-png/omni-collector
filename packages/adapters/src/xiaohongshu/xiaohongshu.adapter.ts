@@ -172,10 +172,10 @@ export class XiaohongshuAdapter extends BaseAdapter {
     if (!userId || guest) {
       throw new Error("AUTH_002: xiaohongshu 会话为游客态，请用真实浏览器登录后更新 Cookie");
     }
-    // 分页拉取全部收藏（cursor 游标，最多 10 页）
+    // 分页拉取全部收藏（cursor 游标，最多 60 页；实测单页约 10-12 条）
     const allNotes: XhsFavoritedNote[] = [];
     let cursorStr = cursor.lastItemId ?? "";
-    for (let page = 0; page < 10; page += 1) {
+    for (let page = 0; page < 60; page += 1) {
       const params = { user_id: userId, cursor: cursorStr, num: 30 } as Record<string, string | number>;
       const body = await this.signedGet(ctx, COLLECT_API, params, jar);
       const notes = parseXhsFavoritedNotes(body);
@@ -184,6 +184,7 @@ export class XiaohongshuAdapter extends BaseAdapter {
       const nextCursor = data?.cursor ?? "";
       if (!data?.has_more || !nextCursor || nextCursor === cursorStr) break;
       cursorStr = nextCursor;
+      if (page < 59) await new Promise((r) => setTimeout(r, 800)); // 风控友好
     }
     return allNotes.map((n, i) => {
       if (n.xsecToken) this.xsecTokens.set(n.noteId, n.xsecToken);

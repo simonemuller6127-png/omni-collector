@@ -35,7 +35,8 @@ export class EngineClient {
   private readonly autoStart: boolean;
 
   constructor(private readonly opts: EngineClientOptions) {
-    this.requestTimeoutMs = opts.requestTimeoutMs ?? 30_000;
+    // 同步/扫描等任务可能耗时较长，默认 10 分钟
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? 600_000;
     this.wsUrl = opts.wsUrl;
     this.autoStart = opts.autoStart ?? true;
   }

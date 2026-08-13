@@ -79,9 +79,9 @@ export class BilibiliAdapter extends BaseAdapter {
     if (folders.length === 0) return [];
     const mixinKey = await this.mixinKey(ctx);
     const rawItems: Array<{ bvid: string; title: string; cover: string; fav_time: number; upper?: { name?: string }; watchLater?: boolean }> = [];
-    // 遍历全部收藏夹（上限 20 个），每个取前 5 页
+    // 遍历全部收藏夹（上限 20 个），每个取前 15 页（默认收藏夹可到 278+ 条）
     for (const folder of folders.slice(0, 20)) {
-      for (let pn = 1; pn <= 5; pn += 1) {
+      for (let pn = 1; pn <= 15; pn += 1) {
         const params = signParams(
           { media_id: String(folder.id), pn: String(pn), ps: '20', platform: 'web' },
           mixinKey,
@@ -106,6 +106,7 @@ export class BilibiliAdapter extends BaseAdapter {
           this.failures += 1;
           break;
         }
+        await new Promise((r) => setTimeout(r, 500)); // 风控友好：请求间隔
       }
     }
     // 稍后再看列表（watch later）
@@ -141,7 +142,7 @@ export class BilibiliAdapter extends BaseAdapter {
         title: m.title,
         author: m.upper?.name,
         coverUrl: m.cover,
-        collectedAt: m.fav_time ? new Date(m.fav_time * 1000).toISOString() : undefined,
+        collectedAt: m.fav_time ? new Date(m.fav_time * 1000).toISOString() : new Date().toISOString(),
         saveType: (m.watchLater ? "watch_later" : "favorited") as "favorited" | "watch_later",
         extra: { contentType: 'video' },
       }));

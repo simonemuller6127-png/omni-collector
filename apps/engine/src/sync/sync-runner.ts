@@ -73,6 +73,14 @@ export class SyncRunner {
           if (p === "makerworld") {
             return new MakerWorldAdapter({ syncLikes: rules.getBool("makerworld_sync_likes", false) });
           }
+          if (p === "youtube") {
+            const cmdRaw = rules.get("ytdlp_command");
+            return new YouTubeAdapter({
+              ytDlpCommand: cmdRaw ? cmdRaw.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+              cookiesFile: path.join(this.opts.dataDir, "ytdl_cookies.txt"),
+              proxyUrl: rules.get("ytdlp_proxy") || undefined,
+            });
+          }
           return ADAPTER_FACTORIES[p]?.();
         },
         collections: new CollectionRepository(db),

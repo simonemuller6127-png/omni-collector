@@ -101,8 +101,6 @@ export class YouTubeAdapter extends BaseAdapter {
     const json = (await this.runYtDlp([
       "--flat-playlist",
       "-J",
-      "--playlist-items",
-      "1-20",
       ...this.cookiesArgs(),
       this.listUrl,
     ])) as { entries?: Array<{ id: string; title: string; channel?: string; url?: string }> };
@@ -111,6 +109,7 @@ export class YouTubeAdapter extends BaseAdapter {
       url: e.url ?? `https://www.youtube.com/watch?v=${e.id}`,
       title: e.title ?? e.id,
       author: e.channel,
+      collectedAt: new Date().toISOString(),
       saveType: "favorited",
       extra: { contentType: "video" },
     }));
