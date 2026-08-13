@@ -24,6 +24,7 @@ export interface CollectionDTO {
   topics?: string[];
   comments?: Array<{ author: string; content: string }>;
   linkedFiles?: string[];
+  related?: Array<{ id: string; platform: string; title: string; saveType: CollectionDTO["saveType"]; contentType: string }>;
 }
 
 export interface UserZone {

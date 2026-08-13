@@ -329,6 +329,49 @@
   color: var(--text-normal);
 }
 
+/* 批量操作 */
+.omni-batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+.omni-check {
+  flex: none;
+  margin-right: 4px;
+}
+
+/* 相关收藏 */
+.omni-detail-related {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.omni-related-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.omni-related-row:hover {
+  border-color: var(--interactive-accent);
+}
+.omni-related-title {
+  font-size: 0.85em;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .omni-ai-list {
   display: flex;
   flex-direction: column;

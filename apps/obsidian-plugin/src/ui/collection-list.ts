@@ -8,6 +8,7 @@ export interface ListDataSource {
   list(): Promise<CollectionDTO[]>;
   listLocalFiles(): Promise<Array<{ file_path: string; file_name: string; file_type: string | null; linked_collection_id: string | null; linked_title: string | null }>>;
   onOpenDetail(collectionId: string): void;
+  onBatch(ids: string[], action: "tag" | "topic" | "priority" | "organize" | "convert", value: string): Promise<void>;
   getDefaultViewMode(): "list" | "card";
   onOrganize(collectionId: string, state: CollectionDTO["organizeStatus"]): Promise<void>;
   onTag(collectionId: string, tag: string): Promise<void>;
@@ -89,8 +90,11 @@ export class OmniCollectionListView extends ItemView {
   private mode: "collections" | "local" = "collections";
   private viewMode: "list" | "card" = "list";
   private coverCache = new Map<string, string>();
+  private selecting = false;
+  private readonly selected = new Set<string>();
   private listEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
+  private batchBarEl!: HTMLElement;
   private totalEl!: HTMLElement;
 
   constructor(
@@ -127,6 +131,8 @@ export class OmniCollectionListView extends ItemView {
     container.createEl("div", { text: "Omni Collector 收藏", cls: "omni-panel-title" });
     this.totalEl = container.createEl("div", { cls: "omni-total" });
     this.toolbarEl = container.createEl("div", { cls: "omni-toolbar" });
+    this.batchBarEl = container.createEl("div", { cls: "omni-batch-bar" });
+    this.batchBarEl.style.display = "none";
     this.listEl = container.createEl("div", { cls: "omni-list" });
     await this.refreshList();
   }
@@ -174,9 +180,19 @@ export class OmniCollectionListView extends ItemView {
     tb.createEl('button', { text: '刷新', cls: 'omni-chip omni-chip-refresh' })
       .addEventListener('click', () => { void this.refreshList(); });
     if (this.mode === 'collections') {
-      tb.createEl('button', { text: this.viewMode === 'list' ? '切换卡片视图' : '切换列表视图', cls: 'omni-chip' })
-        .addEventListener('click', () => { this.viewMode = this.viewMode === 'list' ? 'card' : 'list'; this.renderToolbar(); void this.renderList(); });
+    tb.createEl('button', { text: this.viewMode === 'list' ? '切换卡片视图' : '切换列表视图', cls: 'omni-chip' })
+      .addEventListener('click', () => { this.viewMode = this.viewMode === 'list' ? 'card' : 'list'; this.renderToolbar(); void this.renderList(); });
+    if (this.mode === 'collections') {
+      tb.createEl('button', { text: this.selecting ? '完成选择' : '批量选择', cls: `omni-chip${this.selecting ? ' omni-chip-active' : ''}` })
+        .addEventListener('click', () => {
+          this.selecting = !this.selecting;
+          this.selected.clear();
+          this.renderToolbar();
+          this.renderBatchBar();
+          void this.renderList();
+        });
     }
+  }
   }
 
   private async refreshList(): Promise<void> {
@@ -247,6 +263,15 @@ export class OmniCollectionListView extends ItemView {
     }
     for (const item of items) {
       const row = this.listEl.createEl('div', { cls: 'omni-row' });
+      if (this.selecting) {
+        const cb = row.createEl('input', { type: 'checkbox', cls: 'omni-check' });
+        cb.checked = this.selected.has(item.id);
+        cb.addEventListener('change', () => {
+          if (cb.checked) this.selected.add(item.id);
+          else this.selected.delete(item.id);
+          this.renderBatchBar();
+        });
+      }
       const main = row.createEl('div', { cls: 'omni-row-main' });
       main.createEl('a', { text: item.title || item.platformItemId, href: item.url, cls: 'omni-title' });
       main.addEventListener('click', () => this.source.onOpenDetail(item.id));
@@ -343,6 +368,68 @@ export class OmniCollectionListView extends ItemView {
         })
         .catch((e) => new Notice(`Topic 添加失败：${(e as Error).message}`));
     }).open();
+  }
+
+  private currentItems(): CollectionDTO[] {
+    const filter: CollectionFilter = {};
+    if (this.statusFilter === "unorganized") filter.status = "unorganized";
+    else if (this.statusFilter === "organized") filter.status = "organized";
+    else if (this.statusFilter === "archived") filter.status = "archived";
+    if (this.priorityFilter !== "all") filter.priority = this.priorityFilter;
+    let items = filterCollections(this.items, filter);
+    if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
+    if (this.saveTypeFilter !== "all") items = items.filter((i) => i.saveType === this.saveTypeFilter);
+    return items;
+  }
+
+  private renderBatchBar(): void {
+    const bar = this.batchBarEl;
+    bar.empty();
+    if (!this.selecting) {
+      bar.style.display = "none";
+      return;
+    }
+    bar.style.display = "flex";
+    bar.createEl("span", { text: `已选 ${this.selected.size} 条`, cls: "omni-meta-text" });
+    bar.createEl("button", { text: "全选当前", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+      for (const i of this.currentItems()) this.selected.add(i.id);
+      this.renderBatchBar();
+      void this.renderList();
+    });
+    bar.createEl("button", { text: "清除", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+      this.selected.clear();
+      this.renderBatchBar();
+      void this.renderList();
+    });
+    bar.createEl("button", { text: "批量 Tag", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("tag"));
+    bar.createEl("button", { text: "批量 Topic", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("topic"));
+    bar.createEl("button", { text: "设为重要", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.runBatch("priority", "important"));
+    bar.createEl("button", { text: "标记已整理", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.runBatch("organize", "organized"));
+    bar.createEl("button", { text: "转收藏", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.runBatch("convert", "favorited"));
+    bar.createEl("button", { text: "归档", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.runBatch("convert", "archived"));
+  }
+
+  private promptBatch(action: "tag" | "topic"): void {
+    new PromptModal(this.app, action === "tag" ? "批量打 Tag" : "批量归入 Topic", action === "tag" ? "输入标签名" : "输入 Topic 名", (v) => {
+      void this.runBatch(action, v);
+    }).open();
+  }
+
+  private async runBatch(action: "tag" | "topic" | "priority" | "organize" | "convert", value: string): Promise<void> {
+    const ids = [...this.selected];
+    if (ids.length === 0) {
+      new Notice("请先勾选收藏");
+      return;
+    }
+    try {
+      await this.source.onBatch(ids, action, value);
+      new Notice(`已批量处理 ${ids.length} 条`);
+      this.selected.clear();
+      this.renderBatchBar();
+      await this.refreshList();
+    } catch (err) {
+      new Notice(`批量操作失败：${(err as Error).message}`);
+    }
   }
 
   async onClose(): Promise<void> {}

@@ -14,7 +14,7 @@ import {
 } from "@omni/database";
 import type { CollectionDTO } from "@omni/shared-core";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
-import { ContentGroupService } from "../group/content-group-service.js";
+import { ContentGroupService, normalizeEntity } from "../group/content-group-service.js";
 import { FileIndexer } from "../fileindex/file-indexer.js";
 import { BrowserSessionManager } from "../sync/browser-session.js";
 import { XiaohongshuAdapter } from "@omni/adapters";
@@ -87,6 +87,7 @@ export class TaskService {
       TASK_INDEX: (msg) => this.index(msg),
       TASK_FETCH: (msg) => this.fetchText(msg),
       TASK_CONVERT: (msg) => this.convert(msg),
+      TASK_BATCH: (msg) => this.batch(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
@@ -250,6 +251,7 @@ export class TaskService {
         const id = String(msg.payload.id ?? "");
         const col = new CollectionRepository(this.db).findById(id);
         if (!col) return error(msg.request_id, "QUERY_001", "QUERY_001: collection not found");
+        const collections = new CollectionRepository(this.db);
         const groups = new ContentGroupRepository(this.db);
         const tagRepo = new TagRepository(this.db);
         const topicRepo = new TopicRepository(this.db);
@@ -261,6 +263,26 @@ export class TaskService {
           .prepare("SELECT file_path FROM local_files WHERE linked_collection_id = ? ORDER BY modified_at DESC")
           .all(id) as Array<{ file_path: string }>).map((f) => f.file_path);
         const group = groups.groupOfCollection(col.id);
+        // Related Collections：同分组优先，否则同标题+同作者的跨平台启发式
+        let relatedRows = group ? groups.listCollectionsInGroup(group.id).filter((r) => r.id !== col.id) : [];
+        if (relatedRows.length === 0) {
+          relatedRows = collections
+            .listAll()
+            .filter(
+              (c) =>
+                c.id !== col.id &&
+                normalizeEntity(c.title ?? "") === normalizeEntity(col.title ?? "") &&
+                (c.author ?? "").toLowerCase() === (col.author ?? "").toLowerCase(),
+            )
+            .slice(0, 10);
+        }
+        const related = relatedRows.slice(0, 10).map((r) => ({
+          id: r.id,
+          platform: r.platform,
+          title: r.title ?? "",
+          saveType: r.save_type,
+          contentType: r.content_type,
+        }));
         const dto: CollectionDTO = {
           id: col.id,
           platform: col.platform,
@@ -285,6 +307,7 @@ export class TaskService {
           topics: topicRepo.listTopicsOfCollection(col.id).map((t) => t.name),
           comments,
           linkedFiles,
+          related,
         };
         return complete(msg.request_id, { task: "status_query", scope, collection: dto });
       }
@@ -414,6 +437,72 @@ export class TaskService {
       return complete(msg.request_id, { task: "convert", collection_id: collectionId, to });
     } catch (err) {
       return error(msg.request_id, "CONV_001", `CONV_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 批量操作：tag / topic / priority / organize / convert。 */
+  async batch(msg: OmniMessage): Promise<OmniMessage> {
+    const rawIds = msg.payload.ids;
+    const ids = Array.isArray(rawIds) ? rawIds.map(String) : [];
+    const action = String(msg.payload.action ?? "");
+    const value = String(msg.payload.value ?? "");
+    const valid = ["tag", "topic", "priority", "organize", "convert"];
+    if (ids.length === 0 || !valid.includes(action)) {
+      return error(msg.request_id, "BATCH_001", "BATCH_001: invalid ids or action");
+    }
+    try {
+      const collections = new CollectionRepository(this.db);
+      const tags = new TagRepository(this.db);
+      const topics = new TopicRepository(this.db);
+      const stamp = new Date().toISOString();
+      let applied = 0;
+      let failed = 0;
+      for (const id of ids) {
+        try {
+          if (!collections.findById(id)) {
+            failed += 1;
+            continue;
+          }
+          switch (action) {
+            case "tag": {
+              const t = tags.ensureTag(value);
+              tags.bindTag(id, t.id, "user");
+              break;
+            }
+            case "topic": {
+              const t = topics.findByName(value) ?? topics.createTopic(value, id);
+              topics.addCollection(t.id, id);
+              topics.setStatus(t.id, "accepted");
+              break;
+            }
+            case "priority":
+              collections.setPriority(id, value as "normal" | "important" | "project" | "knowledge");
+              break;
+            case "organize":
+              collections.setOrganizeState(id, value as "unorganized" | "viewed" | "organized" | "archived");
+              break;
+            case "convert":
+              if (value === "favorited") {
+                this.db.prepare("UPDATE collections SET save_type='favorited', updated_at=? WHERE id=?").run(stamp, id);
+              } else if (value === "archived") {
+                this.db.prepare("UPDATE collections SET organize_status='archived', updated_at=? WHERE id=?").run(stamp, id);
+              } else {
+                failed += 1;
+                continue;
+              }
+              break;
+            default:
+              failed += 1;
+              continue;
+          }
+          applied += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      return complete(msg.request_id, { task: "batch", action, value, applied, failed });
+    } catch (err) {
+      return error(msg.request_id, "BATCH_001", `BATCH_001: ${(err as Error).message}`);
     }
   }
 

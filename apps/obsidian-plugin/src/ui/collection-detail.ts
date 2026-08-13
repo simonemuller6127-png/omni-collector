@@ -190,6 +190,21 @@ export class OmniCollectionDetailView extends ItemView {
       });
     }
 
+    // Related Collections（同分组或同实体跨平台）
+    if ((item.related ?? []).length > 0) {
+      container.createEl("div", { text: "相关收藏", cls: "omni-section-title" });
+      const relatedBox = container.createEl("div", { cls: "omni-detail-related" });
+      for (const r of item.related ?? []) {
+        const row = relatedBox.createEl("div", { cls: "omni-related-row" });
+        row.createEl("span", { text: PLATFORM_LABELS[r.platform] ?? r.platform, cls: "omni-badge omni-badge-platform" });
+        row.createEl("span", { text: r.title || r.id, cls: "omni-related-title" });
+        row.addEventListener("click", () => {
+          this.currentId = r.id;
+          void this.renderContent();
+        });
+      }
+    }
+
     // 整理操作
     const actions = container.createEl("div", { cls: "omni-detail-actions" });
     const orgBtn = actions.createEl("button", { text: `整理：${item.organizeStatus}（点击推进）`, cls: "omni-act" });

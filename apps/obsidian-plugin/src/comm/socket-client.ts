@@ -400,6 +400,16 @@ export class EngineClient {
     };
   }
 
+  /** 批量操作。 */
+  async batch(ids: string[], action: "tag" | "topic" | "priority" | "organize" | "convert", value: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_BATCH",
+      payload: { ids, action, value },
+    });
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }

@@ -50,6 +50,7 @@ export default class OmniCollectorPlugin extends Plugin {
         list: () => this.engine.listCollections(),
         listLocalFiles: () => this.engine.listLocalFiles(),
         onOpenDetail: (id) => void this.openCollectionDetail(id),
+        onBatch: (ids, action, value) => this.engine.batch(ids, action, value).then(() => undefined),
         getDefaultViewMode: () => this.pluginSettings.viewMode,
         onOrganize: (id, state) => this.engine.setOrganizeState(id, state).then(() => undefined),
         onTag: (id, tag) => this.engine.addTag(id, tag).then(() => undefined),
