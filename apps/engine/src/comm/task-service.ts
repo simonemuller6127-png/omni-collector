@@ -79,6 +79,7 @@ export class TaskService {
     return {
       RULE_UPDATE: (msg) => this.ruleUpdate(msg),
       TASK_SYNC: (msg) => this.sync(msg),
+      TASK_COMMENTS: (msg) => this.comments(msg),
       TASK_AI: (msg) => this.ai(msg),
       TASK_GROUP: (msg) => this.group(msg),
       TASK_ORGANIZE: (msg) => this.organize(msg),
@@ -100,6 +101,7 @@ export class TaskService {
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       AI_REVIEW_UNDO: (msg) => this.aiReviewUndo(msg),
+      RULE_LIST: (msg) => this.ruleList(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
     };
   }
@@ -115,16 +117,47 @@ export class TaskService {
   async sync(msg: OmniMessage): Promise<OmniMessage> {
     const platform = String(msg.payload.platform ?? "");
     const mode = SYNC_MODES.includes(msg.payload.mode as SyncMode) ? (msg.payload.mode as SyncMode) : "full";
+    const depth = typeof msg.payload.depth === "number" ? msg.payload.depth : undefined;
     try {
       const runner = new SyncRunner({
         dataDir: this.opts.dataDir,
         migrationsDir: this.opts.migrationsDir,
         headless: this.opts.headless ?? true,
       });
-      const report = await runner.run(platform, mode);
+      const report = await runner.run(platform, mode, depth);
       return complete(msg.request_id, { task: "sync", platform, mode, report });
     } catch (err) {
       return error(msg.request_id, "SYNC_002", `SYNC_002: ${(err as Error).message}`);
+    }
+  }
+
+  /** 评论批量更新：最近 N 天收藏重新抓评论（PRD 12.5）。 */
+  async comments(msg: OmniMessage): Promise<OmniMessage> {
+    const platform = msg.payload.platform ? String(msg.payload.platform) : undefined;
+    const days = typeof msg.payload.days === "number" ? msg.payload.days : undefined;
+    try {
+      const runner = new SyncRunner({
+        dataDir: this.opts.dataDir,
+        migrationsDir: this.opts.migrationsDir,
+        headless: this.opts.headless ?? true,
+      });
+      const reports = await runner.refreshComments(platform, days);
+      return complete(msg.request_id, { task: "comments", reports });
+    } catch (err) {
+      return error(msg.request_id, "SYNC_003", `SYNC_003: ${(err as Error).message}`);
+    }
+  }
+
+  /** 规则中心（PRD 15.4 / SPEC S10）：全量规则 + 最近变更记录。 */
+  async ruleList(msg: OmniMessage): Promise<OmniMessage> {
+    try {
+      return complete(msg.request_id, {
+        task: "rule_list",
+        rules: this.rules.listAll(),
+        changes: this.rules.recentChanges(50),
+      });
+    } catch (err) {
+      return error(msg.request_id, "RULE_002", `RULE_002: ${(err as Error).message}`);
     }
   }
 
@@ -142,6 +175,7 @@ export class TaskService {
         migrationsDir: this.opts.migrationsDir,
         provider,
         batchSize: 1,
+        force: true,
       });
       const result = await runner.run();
       return complete(msg.request_id, { task: "ai", collection_id: collectionId, result });
@@ -248,20 +282,57 @@ export class TaskService {
             "SELECT platform, COUNT(*) AS count FROM collections WHERE content_status='active' GROUP BY platform",
           )
           .all() as Array<{ platform: string; count: number }>;
-        const lastSyncs = this.db
+        const accounts = this.db
           .prepare(
-            "SELECT adapter, MAX(finished_at) AS last_at FROM sync_log WHERE status='success' GROUP BY adapter",
+            "SELECT platform, status, error_reason, last_sync_at FROM platform_accounts",
           )
-          .all() as Array<{ adapter: string; last_at: string }>;
-        const byLast = new Map(lastSyncs.map((l) => [l.adapter, l.last_at]));
+          .all() as Array<{ platform: string; status: string; error_reason: string | null; last_sync_at: string | null }>;
+        const health = this.db
+          .prepare(
+            `SELECT h.adapter, h.level, h.detail
+             FROM adapter_health h
+             JOIN (SELECT adapter, MAX(id) AS mid FROM adapter_health GROUP BY adapter) latest
+               ON latest.mid = h.id`,
+          )
+          .all() as Array<{ adapter: string; level: number; detail: string | null }>;
         const byCount = new Map(counts.map((c) => [c.platform, c.count]));
-        const platforms = ["bilibili", "youtube", "xiaohongshu", "makerworld", "xiaoheihe"].map(
-          (platform) => ({
+        const todaySyncs = (platform: string): number =>
+          (
+            this.db
+              .prepare(
+                "SELECT COUNT(*) AS n FROM sync_log WHERE adapter = ? AND status='success' AND started_at >= date('now')",
+              )
+              .get(platform) as { n: number }
+          ).n;
+        const platforms = ["bilibili", "youtube", "xiaohongshu", "makerworld", "xiaoheihe"].map((platform) => {
+          const account = accounts.find((a) => a.platform === platform);
+          const healthRow = health.find((h) => h.adapter === platform);
+          let level: "green" | "yellow" | "red" = "green";
+          let reason = "";
+          if (account?.status === "error") {
+            level = "red";
+            reason = account.error_reason ?? "账号状态异常";
+          } else if (healthRow && healthRow.level >= 3) {
+            level = "red";
+            reason = healthRow.detail ?? "平台健康严重异常";
+          } else if (healthRow && healthRow.level >= 1) {
+            level = "yellow";
+            reason = healthRow.detail ?? "平台存在告警";
+          } else if (!account?.last_sync_at) {
+            level = "yellow";
+            reason = "从未同步";
+          } else if (Date.now() - new Date(account.last_sync_at).getTime() > 7 * 24 * 3600 * 1000) {
+            level = "yellow";
+            reason = "超过 7 天未同步";
+          }
+          return {
             platform,
             count: byCount.get(platform) ?? 0,
-            lastSyncAt: byLast.get(platform) ?? null,
-          }),
-        );
+            lastSyncAt: account?.last_sync_at ?? null,
+            todaySyncCount: todaySyncs(platform),
+            health: { level, reason },
+          };
+        });
         return complete(msg.request_id, { task: "status_query", scope, platforms });
       }
       if (scope === "collection") {
@@ -355,10 +426,22 @@ export class TaskService {
         const watchLater = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE save_type='watch_later'").get() as { n: number };
         const localFiles = this.db.prepare("SELECT COUNT(*) AS n FROM local_files WHERE content_status='active'").get() as { n: number };
         const topics = this.db.prepare("SELECT COUNT(*) AS n FROM topics WHERE status='accepted'").get() as { n: number };
+        const deleted = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE content_status IN ('deleted','unavailable')").get() as { n: number };
+        const syncFailed = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE sync_status='failed'").get() as { n: number };
+        const fileMissing = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE content_status='file_missing'").get() as { n: number };
         return complete(msg.request_id, {
           task: "status_query",
           scope,
-          summary: { total: total.n, unorganized: unorganized.n, important: important.n, aiPending: aiPending.n, watchLater: watchLater.n, localFiles: localFiles.n, topics: topics.n },
+          summary: {
+            total: total.n,
+            unorganized: unorganized.n,
+            important: important.n,
+            aiPending: aiPending.n,
+            watchLater: watchLater.n,
+            localFiles: localFiles.n,
+            topics: topics.n,
+            anomalies: { deleted: deleted.n, syncFailed: syncFailed.n, fileMissing: fileMissing.n },
+          },
         });
       }
       return complete(msg.request_id, { task: "status_query", scope, ok: true });

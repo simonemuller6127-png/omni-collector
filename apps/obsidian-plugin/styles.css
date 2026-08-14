@@ -35,6 +35,9 @@
 .omni-dot-ready { background: #4caf50; }
 .omni-dot-closing { background: #ff9800; }
 .omni-dot-error { background: #f44336; }
+.omni-dot-green { background: #4caf50; }
+.omni-dot-yellow { background: #ff9800; }
+.omni-dot-red { background: #f44336; }
 
 .omni-status-text {
   flex: 1;
@@ -498,4 +501,33 @@
 .omni-batch-filter select,
 .omni-batch-filter input {
   max-width: 160px;
+}
+.omni-rule-center {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.omni-rule-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+}
+.omni-rule-main {
+  flex: 1;
+  min-width: 0;
+}
+.omni-rule-name {
+  font-weight: 600;
+  font-size: 0.88em;
+}
+.omni-rule-editor {
+  display: flex;
+  gap: 4px;
+  flex: none;
+  align-items: center;
 }

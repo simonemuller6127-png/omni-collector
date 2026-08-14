@@ -31,6 +31,28 @@ export interface OmniSettings {
   localAutoScan: boolean;
   /** 自动扫描间隔（分钟）。 */
   localAutoScanMinutes: number;
+  /** 各平台自动同步频率（daily/weekly）。 */
+  syncFrequency: Record<string, "daily" | "weekly">;
+  /** 初始化完整详情同步条数上限（20~80）。 */
+  initFullDetailLimit: number;
+  /** 自动同步随机执行窗口（分钟）。 */
+  syncRandomWindowMinutes: number;
+  /** 单平台每日自动同步次数上限。 */
+  dailySyncCapPerPlatform: number;
+  /** 功能级 AI 开关：Tag。 */
+  aiTagEnabled: boolean;
+  /** 功能级 AI 开关：Topic。 */
+  aiTopicEnabled: boolean;
+  /** 功能级 AI 开关：摘要。 */
+  aiSummaryEnabled: boolean;
+  /** 每日云端 AI 调用上限。 */
+  aiDailyCallLimit: number;
+  /** 深度历史同步默认回溯深度（页）。 */
+  deepSyncDepth: number;
+  /** 评论批量更新最近 N 天。 */
+  commentBatchUpdateDays: number;
+  /** 各平台上次自动同步时间（ISO）。 */
+  lastAutoSyncAt: Record<string, string>;
 }
 
 export const DEFAULT_SETTINGS: OmniSettings = {
@@ -49,6 +71,23 @@ export const DEFAULT_SETTINGS: OmniSettings = {
   localFolders: [],
   localAutoScan: false,
   localAutoScanMinutes: 30,
+  syncFrequency: {
+    bilibili: "daily",
+    youtube: "daily",
+    xiaohongshu: "daily",
+    makerworld: "daily",
+    xiaoheihe: "daily",
+  },
+  initFullDetailLimit: 50,
+  syncRandomWindowMinutes: 120,
+  dailySyncCapPerPlatform: 3,
+  aiTagEnabled: true,
+  aiTopicEnabled: true,
+  aiSummaryEnabled: true,
+  aiDailyCallLimit: 50,
+  deepSyncDepth: 50,
+  commentBatchUpdateDays: 7,
+  lastAutoSyncAt: {},
 };
 
 export async function loadSettings(plugin: Plugin): Promise<OmniSettings> {

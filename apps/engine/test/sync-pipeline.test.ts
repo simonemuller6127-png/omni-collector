@@ -176,4 +176,28 @@ describe("SyncPipeline", () => {
     const col = collections.findByUrl("https://example.com/video/BV-hashtag-1");
     expect(tags.listCollectionsByTag("生活美学", "platform")).toContain((col as { id: string }).id);
   });
+
+  it("respects maxItems depth cap (deep history limit)", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-sp-depth-"));
+    const migDir = path.join(dataDir, "migrations");
+    fs.cpSync(REAL_MIGRATIONS, migDir, { recursive: true });
+    const m = new MigrationManager(path.join(dataDir, "OmniCollector.db"), migDir, path.join(dataDir, "backup"));
+    m.migrate();
+    const db = m.getDb();
+    const p = new SyncPipeline({
+      getAdapter: () => new FakeAdapter(),
+      collections: new CollectionRepository(db),
+      comments: new CommentRepository(db),
+      accounts: new AccountRepository(db),
+      rules: new RuleCenter(db),
+      logs: new SyncLogRepository(db),
+      ai: new AIRepository(db),
+    });
+    const report = await p.run("fake", "catalog", undefined, 5);
+    expect(report.status).toBe("success");
+    expect(report.itemsAdded).toBe(5);
+    expect(new CollectionRepository(db).count()).toBe(5);
+    m.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
 });

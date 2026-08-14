@@ -15,6 +15,8 @@ export interface OmniController {
   stopEngine(): Promise<void>;
   syncAll(): Promise<void>;
   syncPlatform(platform: string): Promise<void>;
+  deepSyncPlatform(platform: string): Promise<void>;
+  refreshComments(): Promise<void>;
   generateMarkdown(): Promise<void>;
   runGroupRecognition(): Promise<void>;
   scanLocalFiles(): Promise<void>;
@@ -109,6 +111,13 @@ export class OmniSidebarView extends ItemView {
           await this.refreshStatus();
         });
       });
+      const deep = row.createEl("button", { text: "深度", cls: "omni-btn omni-btn-sm omni-btn-ghost" });
+      deep.addEventListener("click", () => {
+        void this.withBusy(async () => {
+          await this.ctrl.deepSyncPlatform(p.key);
+          await this.refreshStatus();
+        });
+      });
       const meta = row.createEl("span", { cls: "omni-platform-meta" });
       this.platformEls.set(p.key, meta);
     }
@@ -123,6 +132,7 @@ export class OmniSidebarView extends ItemView {
     this.addActionButton(contentRow, "Tag/Topic 管理", () => this.ctrl.openTagTopic());
     this.addActionButton(contentRow, "Manual AI 模板", () => this.ctrl.openManualAI());
     this.addActionButton(contentRow, "Manual AI 批量", () => this.ctrl.openManualAIBatch());
+    this.addActionButton(contentRow, "评论批量更新", () => this.withBusy(async () => { await this.ctrl.refreshComments(); await this.refreshStatus(); }));
     this.addActionButton(contentRow, "扫描本地文件", () => this.withBusy(async () => { await this.ctrl.scanLocalFiles(); }));
 
     container
@@ -151,12 +161,23 @@ export class OmniSidebarView extends ItemView {
         for (const p of platforms) {
           total += p.count;
           const el = this.platformEls.get(p.platform);
-          if (el) el.setText(`${p.count} 条 · ${p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleDateString("zh-CN") : "未同步"}`);
+          if (el) {
+            el.empty();
+            const dot = el.createEl("span", {
+              cls: `omni-dot omni-dot-${p.health?.level ?? "unknown"}`,
+              attr: { title: p.health?.reason ?? "" },
+            });
+            el.createEl("span", {
+              text: `${p.count} 条 · ${p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleDateString("zh-CN") : "未同步"}${p.health?.reason ? ` · ${p.health.reason}` : ""}`,
+            });
+            void dot;
+          }
         }
         this.totalEl.setText(`已同步 ${total} 条收藏`);
         const summary = await this.engine.getSummary().catch(() => null);
         if (summary) {
-          this.summaryEl.setText(`未整理 ${summary.unorganized} · 重要/项目 ${summary.important} · 稍后再看 ${summary.watchLater} · 待审 AI ${summary.aiPending} · Topic ${summary.topics} · 本地文件 ${summary.localFiles}`);
+          const a = summary.anomalies;
+          this.summaryEl.setText(`未整理 ${summary.unorganized} · 重要/项目 ${summary.important} · 稍后再看 ${summary.watchLater} · 待审 AI ${summary.aiPending} · Topic ${summary.topics} · 本地 ${summary.localFiles} · 异常 ${a.deleted + a.syncFailed + a.fileMissing}`);
         }
       } catch {
         // 状态查询失败不覆盖连接状态

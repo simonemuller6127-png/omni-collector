@@ -13,6 +13,7 @@ import { OmniCollectionDetailView, VIEW_TYPE_OMNI_DETAIL, type DetailDataSource 
 import { MarkdownBuilder, sanitizeFilename } from "./markdown/markdown-builder.js";
 import { openManualAIModal } from "./ui/manual-ai.js";
 import { openManualAIBatchModal } from "./ui/manual-ai-batch.js";
+import { dailyCapReached, isSyncDue } from "./sync/sync-scheduler.js";
 
 export default class OmniCollectorPlugin extends Plugin {
   pluginSettings!: OmniSettings;
@@ -38,6 +39,7 @@ export default class OmniCollectorPlugin extends Plugin {
     }
     await saveSettings(this, this.pluginSettings);
     this.reloadAutoScan();
+    this.reloadSyncScheduler();
 
     this.engine = new EngineClient({
       pipePath: `\\\\.\\pipe\\omni-collector-${process.pid}`,
@@ -204,10 +206,15 @@ export default class OmniCollectorPlugin extends Plugin {
 
   onunload(): void {
     this.autoScanTimer = null;
+    if (this.syncTimer !== null) {
+      window.clearInterval(this.syncTimer);
+      this.syncTimer = null;
+    }
     this.engine?.dispose();
   }
 
   private autoScanTimer: number | null = null;
+  private syncTimer: number | null = null;
 
   async saveSettings(): Promise<void> {
     await saveSettings(this, this.pluginSettings);
@@ -319,6 +326,8 @@ export default class OmniCollectorPlugin extends Plugin {
           new Notice(`Omni Collector: ${platform} 同步失败 ${String(res.payload?.message ?? "")}`);
         }
       },
+      deepSyncPlatform: (platform) => this.deepSyncPlatform(platform),
+      refreshComments: () => this.refreshCommentsAll(),
       generateMarkdown: () => this.generateCollectionMarkdown(),
       runGroupRecognition: async () => {
         const res = await this.engine.runAutoGroup();
@@ -339,6 +348,63 @@ export default class OmniCollectorPlugin extends Plugin {
       dataDir: this.pluginSettings.dataDir,
       nodeBin: this.pluginSettings.nodeBin || undefined,
     });
+  }
+
+  /** 自动同步调度（PRD 15.4）：每 10 分钟检查一次，按频率+随机窗口+日上限触发。 */
+  reloadSyncScheduler(): void {
+    if (this.syncTimer !== null) {
+      window.clearInterval(this.syncTimer);
+      this.syncTimer = null;
+    }
+    this.syncTimer = window.setInterval(() => void this.checkAutoSync(), 10 * 60_000);
+    void this.checkAutoSync();
+  }
+
+  private async checkAutoSync(): Promise<void> {
+    try {
+      const statuses = await this.engine.listPlatformStatus();
+      for (const s of statuses) {
+        const frequency = this.pluginSettings.syncFrequency[s.platform] ?? "daily";
+        const lastAuto = this.pluginSettings.lastAutoSyncAt[s.platform] ?? null;
+        if (dailyCapReached(s.todaySyncCount, this.pluginSettings.dailySyncCapPerPlatform)) continue;
+        if (!isSyncDue({ frequency, lastRunAt: lastAuto, randomWindowMinutes: this.pluginSettings.syncRandomWindowMinutes })) {
+          continue;
+        }
+        this.pluginSettings.lastAutoSyncAt = {
+          ...this.pluginSettings.lastAutoSyncAt,
+          [s.platform]: new Date().toISOString(),
+        };
+        await this.saveSettings();
+        await this.engine.syncPlatform(s.platform, "catalog").catch(() => {});
+      }
+    } catch {
+      // Engine 未就绪时静默跳过，下个周期再试
+    }
+  }
+
+  /** 深度历史同步：按设置的回溯深度拉取。 */
+  async deepSyncPlatform(platform: string): Promise<void> {
+    const depth = this.pluginSettings.deepSyncDepth;
+    const res = await this.engine.syncPlatform(platform, "full", depth);
+    const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number };
+    if (report.status === "success") {
+      new Notice(`深度同步完成：${platform} +${report.itemsAdded ?? 0} 新增 / ${report.itemsUpdated ?? 0} 更新`);
+    } else {
+      new Notice(`深度同步失败：${platform}`);
+    }
+  }
+
+  /** 评论批量更新（最近 N 天）。 */
+  async refreshCommentsAll(): Promise<void> {
+    new Notice("开始批量刷新评论…");
+    try {
+      const res = await this.engine.refreshComments(undefined, this.pluginSettings.commentBatchUpdateDays);
+      const reports = (res.payload?.reports ?? []) as Array<{ platform: string; refreshed: number; failed: number }>;
+      const total = reports.reduce((acc, r) => acc + r.refreshed, 0);
+      new Notice(`评论刷新完成：${total} 条更新（${reports.map((r) => `${r.platform} ${r.refreshed}`).join(" / ")}）`);
+    } catch (err) {
+      new Notice(`评论刷新失败：${(err as Error).message}`);
+    }
   }
 
   updateEngineAutoStart(): void {

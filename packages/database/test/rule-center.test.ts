@@ -70,4 +70,22 @@ describe("RuleCenter", () => {
     expect(rules.get("ai_enabled")).toBe("false");
     expect(rules.get("comment_fetch_default_count")).toBe("3");
   });
+
+  it("listAll exposes current/default/description/impact for rule center", () => {
+    const all = rules.listAll();
+    const row = all.find((r) => r.rule_key === "ai_daily_call_limit");
+    expect(row?.rule_value).toBe("50");
+    expect(row?.default_value).toBe("50");
+    expect(row?.description).toBeTruthy();
+    expect(row?.impact).toContain("每日调用上限");
+  });
+
+  it("set() records old/new value into rule_change_log", () => {
+    rules.set("init_full_detail_limit", "60");
+    const changes = rules.recentChanges(10);
+    const row = changes.find((c) => c.rule_key === "init_full_detail_limit");
+    expect(row?.old_value).toBe("50");
+    expect(row?.new_value).toBe("60");
+    rules.set("init_full_detail_limit", "50");
+  });
 });

@@ -52,7 +52,12 @@ const PRIORITY_RANK: Record<string, number> = {
 export class SyncPipeline {
   constructor(private readonly deps: SyncPipelineDeps) {}
 
-  async run(platform: string, mode: SyncMode = "catalog", ctx?: BrowserContext): Promise<SyncReport> {
+  async run(
+    platform: string,
+    mode: SyncMode = "catalog",
+    ctx?: BrowserContext,
+    maxItems?: number,
+  ): Promise<SyncReport> {
     const startedAt = new Date().toISOString();
     const report: SyncReport = {
       platform,
@@ -69,10 +74,16 @@ export class SyncPipeline {
       const account = this.deps.accounts.getOrCreate(platform);
       const cursor = account.sync_cursor ? (JSON.parse(account.sync_cursor) as { page?: number }) : {};
       const raws = await adapter.fetchCatalog(ctx!, cursor);
-      report.itemsFetched = raws.length;
+      const items = typeof maxItems === "number" && maxItems > 0 ? raws.slice(0, maxItems) : raws;
+      report.itemsFetched = items.length;
       let added = 0;
       let updated = 0;
-      for (const raw of raws) {
+      const maxDetail = this.deps.rules.getNumber(
+        "init_full_detail_limit",
+        mode === "full" || mode === "detail" ? 50 : 0,
+      );
+      let detailIndex = 0;
+      for (const raw of items) {
         const contentType =
           typeof raw.extra?.contentType === "string" ? raw.extra.contentType : "video";
         const existing = this.deps.collections.findByUrl(raw.url);
@@ -102,7 +113,8 @@ export class SyncPipeline {
             this.deps.tags.bindTag(row.id, tagRow.id, "platform");
           }
         }
-        if (mode === "full" || mode === "detail") {
+        if ((mode === "full" || mode === "detail") && detailIndex < maxDetail) {
+          detailIndex += 1;
           const detail = await adapter.fetchDetail(ctx!, raw.url);
           if (this.deps.tags && detail?.description) {
             for (const tag of extractHashtags(detail.description)) {

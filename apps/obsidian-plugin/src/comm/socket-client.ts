@@ -298,13 +298,63 @@ export class EngineClient {
   }
 
   /** 同步指定平台。 */
-  async syncPlatform(platform: string, mode: "catalog" | "full" | "detail" = "full"): Promise<OmniMessage> {
+  async syncPlatform(
+    platform: string,
+    mode: "catalog" | "full" | "detail" = "full",
+    depth?: number,
+  ): Promise<OmniMessage> {
     return this.request({
       request_id: randomUUID(),
       timestamp: new Date().toISOString(),
       message_type: "TASK_SYNC",
-      payload: { platform, mode },
+      payload: { platform, mode, ...(typeof depth === "number" ? { depth } : {}) },
     });
+  }
+
+  /** 评论批量更新（最近 N 天，PRD 12.5）。 */
+  async refreshComments(platform?: string, days?: number): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_COMMENTS",
+      payload: { ...(platform ? { platform } : {}), ...(typeof days === "number" ? { days } : {}) },
+    });
+  }
+
+  /** 规则中心（PRD 15.4）。 */
+  async listRules(): Promise<{
+    rules: Array<{
+      rule_key: string;
+      rule_value: string;
+      default_value: string | null;
+      description: string | null;
+      impact: string | null;
+      updated_at: string;
+    }>;
+    changes: Array<{ rule_key: string; old_value: string | null; new_value: string; changed_at: string }>;
+  }> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "RULE_LIST",
+      payload: {},
+    });
+    return {
+      rules: (res.payload?.rules ?? []) as Array<{
+        rule_key: string;
+        rule_value: string;
+        default_value: string | null;
+        description: string | null;
+        impact: string | null;
+        updated_at: string;
+      }>,
+      changes: (res.payload?.changes ?? []) as Array<{
+        rule_key: string;
+        old_value: string | null;
+        new_value: string;
+        changed_at: string;
+      }>,
+    };
   }
 
   /** 更新收藏整理状态。 */
@@ -321,14 +371,28 @@ export class EngineClient {
   }
 
   /** 查询各平台收藏数与上次同步时间。 */
-  async listPlatformStatus(): Promise<Array<{ platform: string; count: number; lastSyncAt: string | null }>> {
+  async listPlatformStatus(): Promise<
+    Array<{
+      platform: string;
+      count: number;
+      lastSyncAt: string | null;
+      todaySyncCount: number;
+      health: { level: "green" | "yellow" | "red"; reason: string };
+    }>
+  > {
     const res = await this.request({
       request_id: randomUUID(),
       timestamp: new Date().toISOString(),
       message_type: "STATUS_QUERY",
       payload: { scope: "platforms" },
     });
-    return (res.payload?.platforms as Array<{ platform: string; count: number; lastSyncAt: string | null }>) ?? [];
+    return (res.payload?.platforms as Array<{
+      platform: string;
+      count: number;
+      lastSyncAt: string | null;
+      todaySyncCount: number;
+      health: { level: "green" | "yellow" | "red"; reason: string };
+    }>) ?? [];
   }
 
   /** 查询单条收藏详情（含评论）。 */
@@ -481,15 +545,34 @@ export class EngineClient {
   }
 
   /** 查询汇总统计。 */
-  async getSummary(): Promise<{ total: number; unorganized: number; important: number; aiPending: number; watchLater: number; localFiles: number; topics: number }> {
+  async getSummary(): Promise<{
+    total: number;
+    unorganized: number;
+    important: number;
+    aiPending: number;
+    watchLater: number;
+    localFiles: number;
+    topics: number;
+    anomalies: { deleted: number; syncFailed: number; fileMissing: number };
+  }> {
     const res = await this.request({
       request_id: randomUUID(),
       timestamp: new Date().toISOString(),
       message_type: "STATUS_QUERY",
       payload: { scope: "summary" },
     });
-    return (res.payload?.summary as { total: number; unorganized: number; important: number; aiPending: number; watchLater: number; localFiles: number; topics: number }) ?? {
+    return (res.payload?.summary as {
+      total: number;
+      unorganized: number;
+      important: number;
+      aiPending: number;
+      watchLater: number;
+      localFiles: number;
+      topics: number;
+      anomalies: { deleted: number; syncFailed: number; fileMissing: number };
+    }) ?? {
       total: 0, unorganized: 0, important: 0, aiPending: 0, watchLater: 0, localFiles: 0, topics: 0,
+      anomalies: { deleted: 0, syncFailed: 0, fileMissing: 0 },
     };
   }
 

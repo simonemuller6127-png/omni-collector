@@ -68,6 +68,51 @@ export class OmniSettingTab extends PluginSettingTab {
           }),
       );
 
+    containerEl.createEl("h3", { text: "AI 功能开关" });
+    new Setting(containerEl)
+      .setName("AI Tag 建议")
+      .setDesc("关闭后 AI 不再生成 Tag 建议。")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.pluginSettings.aiTagEnabled).onChange(async (value) => {
+          this.plugin.pluginSettings.aiTagEnabled = value;
+          await this.plugin.saveSettings();
+          await this.plugin.updateRule("ai_tag_enabled", String(value));
+        }),
+      );
+    new Setting(containerEl)
+      .setName("AI Topic 建议")
+      .setDesc("关闭后 AI 不再生成 Topic 建议。")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.pluginSettings.aiTopicEnabled).onChange(async (value) => {
+          this.plugin.pluginSettings.aiTopicEnabled = value;
+          await this.plugin.saveSettings();
+          await this.plugin.updateRule("ai_topic_enabled", String(value));
+        }),
+      );
+    new Setting(containerEl)
+      .setName("AI 摘要建议")
+      .setDesc("关闭后 AI 不再生成摘要建议。")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.pluginSettings.aiSummaryEnabled).onChange(async (value) => {
+          this.plugin.pluginSettings.aiSummaryEnabled = value;
+          await this.plugin.saveSettings();
+          await this.plugin.updateRule("ai_summary_enabled", String(value));
+        }),
+      );
+    new Setting(containerEl)
+      .setName("每日 AI 调用上限")
+      .setDesc("默认 50 次；超出后排队次日执行（写入 ai_daily_call_limit）。")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.pluginSettings.aiDailyCallLimit))
+          .onChange(async (v) => {
+            const n = Math.max(1, Math.floor(Number(v) || 50));
+            this.plugin.pluginSettings.aiDailyCallLimit = n;
+            await this.plugin.saveSettings();
+            await this.plugin.updateRule("ai_daily_call_limit", String(n));
+          }),
+      );
+
     containerEl.createEl("h3", { text: "同步" });
     new Setting(containerEl)
       .setName("同步模式")
@@ -80,6 +125,99 @@ export class OmniSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.pluginSettings.initialSyncMode = value as "catalog" | "full";
             await this.plugin.saveSettings();
+          }),
+      );
+
+    containerEl.createEl("h3", { text: "同步计划" });
+    const platforms: Array<[string, string]> = [
+      ["bilibili", "B站"],
+      ["youtube", "YouTube"],
+      ["xiaohongshu", "小红书"],
+      ["makerworld", "MakerWorld"],
+      ["xiaoheihe", "小黑盒"],
+    ];
+    for (const [key, label] of platforms) {
+      new Setting(containerEl)
+        .setName(`${label} 自动同步频率`)
+        .setDesc("daily = 每日自动同步；weekly = 每周自动同步。")
+        .addDropdown((dd) =>
+          dd
+            .addOption("daily", "每日")
+            .addOption("weekly", "每周")
+            .setValue(this.plugin.pluginSettings.syncFrequency[key] ?? "daily")
+            .onChange(async (value) => {
+              this.plugin.pluginSettings.syncFrequency = {
+                ...this.plugin.pluginSettings.syncFrequency,
+                [key]: value as "daily" | "weekly",
+              };
+              await this.plugin.saveSettings();
+              await this.plugin.updateRule(`${key}_sync_frequency`, value);
+            }),
+        );
+    }
+    new Setting(containerEl)
+      .setName("初始化完整详情条数")
+      .setDesc("首次/手动 full 同步最多拉取详情与评论的条数（区间 20~80）。")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.pluginSettings.initFullDetailLimit))
+          .onChange(async (v) => {
+            const n = Math.max(20, Math.min(80, Math.floor(Number(v) || 50)));
+            this.plugin.pluginSettings.initFullDetailLimit = n;
+            await this.plugin.saveSettings();
+            await this.plugin.updateRule("init_full_detail_limit", String(n));
+          }),
+      );
+    new Setting(containerEl)
+      .setName("随机执行窗口（分钟）")
+      .setDesc("自动同步在窗口内随机执行，避免固定时刻被风控。")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.pluginSettings.syncRandomWindowMinutes))
+          .onChange(async (v) => {
+            const n = Math.max(0, Math.floor(Number(v) || 120));
+            this.plugin.pluginSettings.syncRandomWindowMinutes = n;
+            await this.plugin.saveSettings();
+            await this.plugin.updateRule("sync_random_window_minutes", String(n));
+          }),
+      );
+    new Setting(containerEl)
+      .setName("单平台每日同步上限")
+      .setDesc("当天达到上限后不再自动触发该平台。")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.pluginSettings.dailySyncCapPerPlatform))
+          .onChange(async (v) => {
+            const n = Math.max(1, Math.floor(Number(v) || 3));
+            this.plugin.pluginSettings.dailySyncCapPerPlatform = n;
+            await this.plugin.saveSettings();
+            await this.plugin.updateRule("daily_sync_cap_per_platform", String(n));
+          }),
+      );
+    new Setting(containerEl)
+      .setName("深度历史同步回溯深度（页）")
+      .setDesc("手动深度同步时向后拉取的历史页数。")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.pluginSettings.deepSyncDepth))
+          .onChange(async (v) => {
+            const n = Math.max(1, Math.floor(Number(v) || 50));
+            this.plugin.pluginSettings.deepSyncDepth = n;
+            await this.plugin.saveSettings();
+            await this.plugin.updateRule("deep_sync_default_depth", String(n));
+          }),
+      );
+    new Setting(containerEl)
+      .setName("评论批量更新最近 N 天")
+      .setDesc("批量刷新最近 N 天内同步收藏的评论。")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.pluginSettings.commentBatchUpdateDays))
+          .onChange(async (v) => {
+            const n = Math.max(1, Math.floor(Number(v) || 7));
+            this.plugin.pluginSettings.commentBatchUpdateDays = n;
+            await this.plugin.saveSettings();
+            await this.plugin.updateRule("comment_batch_update_days", String(n));
           }),
       );
 
@@ -198,5 +336,57 @@ export class OmniSettingTab extends PluginSettingTab {
             this.plugin.reloadAutoScan();
           }),
       );
+
+    containerEl.createEl("h3", { text: "规则中心" });
+    const ruleBox = containerEl.createEl("div", { cls: "omni-rule-center" });
+    const loadRules = async (): Promise<void> => {
+      ruleBox.empty();
+      try {
+        const { rules, changes } = await this.plugin.engine.listRules();
+        for (const rule of rules) {
+          const row = ruleBox.createEl("div", { cls: "omni-rule-row" });
+          const main = row.createEl("div", { cls: "omni-rule-main" });
+          main.createEl("div", { text: rule.rule_key, cls: "omni-rule-name" });
+          main.createEl("div", {
+            text: `${rule.description ?? ""}${rule.impact ? ` · ${rule.impact}` : ""}`,
+            cls: "omni-meta-text",
+          });
+          const editor = row.createEl("div", { cls: "omni-rule-editor" });
+          const input = editor.createEl("input", {
+            type: "text",
+            attr: { value: rule.rule_value, style: "width:90px;" },
+          });
+          editor
+            .createEl("button", { text: "保存", cls: "omni-act" })
+            .addEventListener("click", async () => {
+              await this.plugin.updateRule(rule.rule_key, input.value);
+              await loadRules();
+            });
+          editor
+            .createEl("button", { text: "默认", cls: "omni-act omni-act-ghost" })
+            .addEventListener("click", async () => {
+              if (rule.default_value !== null) {
+                await this.plugin.updateRule(rule.rule_key, rule.default_value);
+                await loadRules();
+              }
+            });
+        }
+        if (changes.length > 0) {
+          ruleBox.createEl("div", { text: "最近变更", cls: "omni-section-title" });
+          for (const c of changes.slice(0, 8)) {
+            ruleBox.createEl("div", {
+              text: `${c.changed_at}  ${c.rule_key}: ${c.old_value ?? "∅"} → ${c.new_value}`,
+              cls: "omni-meta-text",
+            });
+          }
+        }
+      } catch (err) {
+        ruleBox.createEl("div", {
+          text: `规则中心加载失败：${(err as Error).message}`,
+          cls: "omni-empty",
+        });
+      }
+    };
+    void loadRules();
   }
 }

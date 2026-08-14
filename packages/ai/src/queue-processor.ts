@@ -223,7 +223,7 @@ export class AiQueueProcessor {
         );
         const suggestions = parseSuggestions(response.text);
         for (const s of suggestions) {
-          this.deps.saveSuggestion({
+          const saved = this.deps.saveSuggestion({
             collection_id: item.collectionId,
             suggestion_type: s.type,
             payload: s.payload,
@@ -231,7 +231,7 @@ export class AiQueueProcessor {
             input_hash: hash,
             confidence: s.confidence,
           });
-          result.suggestionsCreated += 1;
+          if (saved) result.suggestionsCreated += 1;
         }
         this.deps.markDone(item.id);
       } catch (err) {

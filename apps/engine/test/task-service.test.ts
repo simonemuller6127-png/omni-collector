@@ -6,6 +6,7 @@ import type { AIProvider } from "@omni/ai";
 import type { OmniMessage } from "@omni/shared-core";
 import {
   AIRepository,
+  AccountRepository,
   CollectionRepository,
   ContentGroupRepository,
   MigrationManager,
@@ -453,6 +454,77 @@ describe("TaskService (internal, fake provider)", () => {
         ].sort((a, b) => (a.collection_id < b.collection_id ? -1 : 1)),
       );
       verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("RULE_LIST returns rules with impact and recent changes", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const h = service.handlers();
+      await h.RULE_UPDATE?.(makeMsg("RULE_UPDATE", { rule_key: "init_full_detail_limit", rule_value: "60" }));
+      const res = await h.RULE_LIST?.(makeMsg("RULE_LIST", {}));
+      expect(res?.message_type).toBe("TASK_COMPLETE");
+      const rules = (res?.payload?.rules ?? []) as Array<{ rule_key: string; impact?: string | null }>;
+      expect(rules.find((r) => r.rule_key === "ai_enabled")?.impact).toContain("全局开关");
+      const changes = (res?.payload?.changes ?? []) as Array<{ rule_key: string; new_value: string }>;
+      expect(changes[0].rule_key).toBe("init_full_detail_limit");
+      expect(changes[0].new_value).toBe("60");
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("STATUS_QUERY platforms returns health level with error reason", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const accounts = new AccountRepository(db);
+      accounts.getOrCreate("bilibili");
+      accounts.updateCursor("bilibili", "{}");
+      accounts.getOrCreate("youtube");
+      accounts.setStatus("youtube", "error", "cookie expired");
+      manager.close();
+      const res = await service.handlers().STATUS_QUERY?.(makeMsg("STATUS_QUERY", { scope: "platforms" }));
+      const platforms = (res?.payload?.platforms ?? []) as Array<{
+        platform: string;
+        health?: { level: string; reason?: string };
+      }>;
+      expect(platforms.find((p) => p.platform === "bilibili")?.health?.level).toBe("green");
+      const yt = platforms.find((p) => p.platform === "youtube");
+      expect(yt?.health?.level).toBe("red");
+      expect(yt?.health?.reason).toContain("cookie");
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("summary includes anomaly counts (deleted/syncFailed/fileMissing)", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const collections = new CollectionRepository(db);
+      collections.upsertByPlatformItem("bilibili", "d1", { url: "https://x/1", title: "D" });
+      collections.upsertByPlatformItem("bilibili", "f1", { url: "https://x/2", title: "F" });
+      collections.upsertByPlatformItem("bilibili", "m1", { url: "https://x/3", title: "M" });
+      db.prepare("UPDATE collections SET content_status='deleted' WHERE platform_item_id='d1'").run();
+      db.prepare("UPDATE collections SET sync_status='failed' WHERE platform_item_id='f1'").run();
+      db.prepare("UPDATE collections SET content_status='file_missing' WHERE platform_item_id='m1'").run();
+      manager.close();
+      const res = await service.handlers().STATUS_QUERY?.(makeMsg("STATUS_QUERY", { scope: "summary" }));
+      expect((res?.payload?.summary as { anomalies: { deleted: number; syncFailed: number; fileMissing: number } }).anomalies).toEqual({
+        deleted: 1,
+        syncFailed: 1,
+        fileMissing: 1,
+      });
     } finally {
       service.dispose();
     }

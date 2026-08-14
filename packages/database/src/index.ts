@@ -10,6 +10,7 @@ export type { NewComment } from "./repositories/comment.repository.js";
 export { UserRepository } from "./repositories/user.repository.js";
 export type { CollectionRow, CommentRow, UserNoteRow } from "./types.js";
 export { RuleCenter } from "./repositories/rule-center.js";
+export type { RuleChange, RuleEntry } from "./repositories/rule-center.js";
 export { AIRepository } from "./repositories/ai.repository.js";
 export type { NewSuggestion } from "./repositories/ai.repository.js";
 export { FileRepository } from "./repositories/file.repository.js";

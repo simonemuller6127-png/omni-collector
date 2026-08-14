@@ -4,6 +4,7 @@ export const MESSAGE_TYPES = [
   "ENGINE_START",
   "ENGINE_STOP",
   "TASK_SYNC",
+  "TASK_COMMENTS",
   "TASK_AI",
   "TASK_GROUP",
   "TASK_ORGANIZE",
@@ -27,6 +28,7 @@ export const MESSAGE_TYPES = [
   "AI_REVIEW_UNDO",
   "STATUS_QUERY",
   "RULE_UPDATE",
+  "RULE_LIST",
   "ENGINE_READY",
   "TASK_PROGRESS",
   "TASK_COMPLETE",
@@ -48,6 +50,7 @@ export interface OmniMessage {
 export const REQUIRED_PAYLOAD_FIELDS: Partial<Record<OmniMessageType, string[]>> = {
   ENGINE_START: ["task"],
   TASK_SYNC: ["mode"],
+  TASK_COMMENTS: [],
   TASK_AI: ["collection_id"],
   TASK_GROUP: [],
   TASK_ORGANIZE: ["collection_id", "organize_status"],
@@ -68,6 +71,7 @@ export const REQUIRED_PAYLOAD_FIELDS: Partial<Record<OmniMessageType, string[]>>
   AI_REVIEW_UPDATE: ["suggestion_id", "status"],
   STATUS_QUERY: ["scope"],
   RULE_UPDATE: ["rule_key", "rule_value"],
+  RULE_LIST: [],
 };
 
 export type ValidationResult =
