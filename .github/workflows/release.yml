@@ -43,6 +43,7 @@ jobs:
           cp apps/obsidian-plugin/dist/main.js release/main.js
           cp apps/obsidian-plugin/manifest.json release/manifest.json
           cp apps/obsidian-plugin/styles.css release/styles.css
+          cp apps/obsidian-plugin/versions.json release/versions.json
           cd release
           zip -r ../omni-collector.zip .
 
@@ -53,5 +54,6 @@ jobs:
             release/main.js
             release/manifest.json
             release/styles.css
+            release/versions.json
             omni-collector.zip
           generate_release_notes: true
