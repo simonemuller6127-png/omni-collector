@@ -18,6 +18,7 @@ export interface AiReviewSource {
   review(id: string, status: "accepted" | "rejected"): Promise<void>;
   undo(id: string): Promise<void>;
   openManualAI?: () => void;
+  openManualAIBatch?: () => void;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -98,6 +99,11 @@ export class OmniAiReviewView extends ItemView {
       header
         .createEl("button", { text: "Manual AI 模板", cls: "omni-btn omni-btn-sm" })
         .addEventListener("click", () => this.source.openManualAI?.());
+    }
+    if (this.source.openManualAIBatch) {
+      header
+        .createEl("button", { text: "Manual AI 批量", cls: "omni-btn omni-btn-sm" })
+        .addEventListener("click", () => this.source.openManualAIBatch?.());
     }
     const list = container.createEl("div", { cls: "omni-ai-list" });
     container.createEl("div", {
@@ -183,6 +189,11 @@ export class OmniAiReviewView extends ItemView {
       header
         .createEl("button", { text: "Manual AI 模板", cls: "omni-btn omni-btn-sm" })
         .addEventListener("click", () => this.source.openManualAI?.());
+    }
+    if (this.source.openManualAIBatch) {
+      header
+        .createEl("button", { text: "Manual AI 批量", cls: "omni-btn omni-btn-sm" })
+        .addEventListener("click", () => this.source.openManualAIBatch?.());
     }
     const list = container.createEl("div", { cls: "omni-ai-list" });
     container.createEl("div", {

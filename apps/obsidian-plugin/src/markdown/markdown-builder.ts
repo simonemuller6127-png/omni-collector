@@ -32,9 +32,7 @@ export class MarkdownBuilder {
     ].join('\n');
     const comments = (dto.comments ?? []).map((c) => `- **${c.author}**：${c.content}`).join('\n');
     const frontmatter = this.buildFrontmatter(dto);
-    const topicLinks = (dto.topics ?? [])
-      .map((t) => `- [[Omni Collector/Topics/${sanitizeFilename(t)}]]`)
-      .join("\n");
+    const graphLinks = this.buildGraphLinks(dto);
     return [
       frontmatter,
       '---',
@@ -46,7 +44,7 @@ export class MarkdownBuilder {
       '',
       `# ${escapeTitleHash(dto.title)}`,
       '',
-      ...(topicLinks ? ['## 关联', '', topicLinks, ''] : []),
+      ...(graphLinks ? ['## 关联', '', graphLinks, ''] : []),
       ...(dto.coverUrl ? [`![cover](${dto.coverUrl})`, ''] : []),
       ...(dto.author ? [`作者：${dto.author}`, ''] : []),
       ...(dto.description ? ['## 简介', '', dto.description, ''] : []),
@@ -113,9 +111,27 @@ export class MarkdownBuilder {
       const head = out.slice(0, markerIdx + SYSTEM_END.length);
       let tail = out.slice(markerIdx + SYSTEM_END.length);
       tail = tail.replace(/^# .*$/m, `# ${escapeTitleHash(dto.title)}`);
+      // 重建「关联」区（Tag/Topic 聚合页双链），旧链接随标签变更移除
+      const links = this.buildGraphLinks(dto);
+      const sectionRe = /^## 关联\s*$[\s\S]*?(?=^## |^# |\Z)/m;
+      if (links) {
+        tail = tail.replace(sectionRe, `## 关联\n\n${links}\n\n`);
+      } else {
+        tail = tail.replace(sectionRe, "");
+      }
       out = head + tail;
     }
     return out;
+  }
+
+  private buildGraphLinks(dto: CollectionDTO): string {
+    const topicLinks = (dto.topics ?? [])
+      .map((t) => `- [[Omni Collector/Topics/${sanitizeFilename(t)}]]`)
+      .join("\n");
+    const tagLinks = (dto.tags ?? [])
+      .map((t) => `- [[Omni Collector/Tags/${sanitizeFilename(t)}]]`)
+      .join("\n");
+    return [topicLinks, tagLinks].filter(Boolean).join("\n");
   }
 
   /** Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。 */
@@ -133,6 +149,28 @@ export class MarkdownBuilder {
       `# ${name}`,
       "",
       "> 主题聚合页（Omni Collector 自动生成，修改会被覆盖）",
+      "",
+      "## 收藏",
+      "",
+      links,
+      "",
+    ].join("\n");
+  }
+
+  /** Tag 聚合页（PRD 16 / 关系图谱联动）：主 Tag 节点 + 成员笔记 wikilink。 */
+  buildTagHub(tagName: string, noteLinks: string[]): string {
+    const name = (tagName || "未命名标签").trim();
+    const links = [...new Set(noteLinks.filter(Boolean))]
+      .map((l) => `- [[${l.replace(/\.md$/i, "")}]]`)
+      .join("\n");
+    return [
+      "---",
+      `tags: ["${sanitizeFilename(name)}"]`,
+      "---",
+      "",
+      `# ${name}`,
+      "",
+      "> 标签聚合页（Omni Collector 自动生成，修改会被覆盖）",
       "",
       "## 收藏",
       "",

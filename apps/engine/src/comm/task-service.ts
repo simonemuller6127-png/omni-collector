@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { OmniMessage } from "@omni/shared-core";
 import type { AIProvider } from "@omni/ai";
-import { parseSuggestions, parseTagPayload } from "@omni/ai";
+import { parseBatchSuggestions, parseSuggestions, parseTagPayload } from "@omni/ai";
 import {
   AIRepository,
   CollectionRepository,
@@ -96,6 +96,7 @@ export class TaskService {
       TASK_CONVERT: (msg) => this.convert(msg),
       TASK_BATCH: (msg) => this.batch(msg),
       TASK_AI_MANUAL: (msg) => this.aiManual(msg),
+      TASK_AI_MANUAL_BATCH: (msg) => this.aiManualBatch(msg),
       AI_REVIEW_LIST: (msg) => this.aiReviewList(msg),
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       AI_REVIEW_UNDO: (msg) => this.aiReviewUndo(msg),
@@ -634,6 +635,39 @@ export class TaskService {
       return complete(msg.request_id, { task: "ai_manual", collection_id: collectionId, saved });
     } catch (err) {
       return error(msg.request_id, "AI_006", `AI_006: ${(err as Error).message}`);
+    }
+  }
+
+  /** Manual 批量（PRD 19.3 批量版）：按索引打包回复，逐条收藏生成 Suggestion。 */
+  async aiManualBatch(msg: OmniMessage): Promise<OmniMessage> {
+    const rawIds = msg.payload.collection_ids;
+    const ids = Array.isArray(rawIds) ? rawIds.map(String) : [];
+    const reply = String(msg.payload.reply ?? "").trim();
+    if (ids.length === 0 || !reply) {
+      return error(msg.request_id, "AI_008", "AI_008: missing collection_ids or reply");
+    }
+    try {
+      const aiRepo = new AIRepository(this.db);
+      const collections = new CollectionRepository(this.db);
+      const entries = parseBatchSuggestions(reply);
+      let saved = 0;
+      for (const entry of entries) {
+        const collectionId = ids[entry.index];
+        if (!collectionId || !collections.findById(collectionId)) continue;
+        for (const s of entry.suggestions) {
+          aiRepo.saveSuggestion({
+            collection_id: collectionId,
+            suggestion_type: s.type,
+            payload: s.payload,
+            model: "manual-batch",
+            confidence: s.confidence,
+          });
+          saved += 1;
+        }
+      }
+      return complete(msg.request_id, { task: "ai_manual_batch", entries: entries.length, saved });
+    } catch (err) {
+      return error(msg.request_id, "AI_008", `AI_008: ${(err as Error).message}`);
     }
   }
 

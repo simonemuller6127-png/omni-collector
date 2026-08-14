@@ -114,4 +114,22 @@ describe("MarkdownBuilder", () => {
     expect(hub).toContain("[[Omni Collector/xiaohongshu/桌搭推荐]]");
     expect(hub).toContain("[[Omni Collector/bilibili/桌搭视频]]");
   });
+
+  it("collection notes link to both tag and topic hub nodes (graph double-link)", () => {
+    const md = new MarkdownBuilder().buildFromDTO({
+      ...dto,
+      tags: ["生活美学"],
+      topics: ["桌搭设计"],
+    });
+    expect(md).toContain("[[Omni Collector/Topics/桌搭设计]]");
+    expect(md).toContain("[[Omni Collector/Tags/生活美学]]");
+  });
+
+  it("builds tag hub note with wikilinks", () => {
+    const hub = new MarkdownBuilder().buildTagHub("生活美学", [
+      "Omni Collector/xiaohongshu/桌搭推荐",
+    ]);
+    expect(hub).toContain("# 生活美学");
+    expect(hub).toContain("[[Omni Collector/xiaohongshu/桌搭推荐]]");
+  });
 });

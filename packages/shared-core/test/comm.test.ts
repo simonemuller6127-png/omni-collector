@@ -33,5 +33,7 @@ describe("comm protocol v1.1 tag/topic/ai additions", () => {
     expect(validateOmniMessage(msg("AI_REVIEW_UNDO", { suggestion_id: "s1" })).ok).toBe(true);
     expect(validateOmniMessage(msg("TAG_LIST", {})).ok).toBe(true);
     expect(validateOmniMessage(msg("TOPIC_LIST", {})).ok).toBe(true);
+    expect(validateOmniMessage(msg("TASK_AI_MANUAL_BATCH", { collection_ids: ["a"], reply: "x" })).ok).toBe(true);
+    expect(validateOmniMessage(msg("TASK_AI_MANUAL_BATCH", {})).ok).toBe(false);
   });
 });

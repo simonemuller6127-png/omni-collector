@@ -25,6 +25,11 @@ export interface ParsedSuggestion {
   confidence?: number;
 }
 
+export interface BatchReplyEntry {
+  index: number;
+  suggestions: ParsedSuggestion[];
+}
+
 export interface AiQueueDeps {
   provider: AIProvider;
   nextBatch(limit: number): QueueItemWithContent[];
@@ -160,6 +165,25 @@ export function parseSuggestions(text: string): ParsedSuggestion[] {
     out.push({ type: type as SuggestionType, payload, confidence });
   }
   return out;
+}
+
+/** 解析 Manual 批量回复：按索引对应收藏，逐条拆出建议（PRD 19.3 批量版）。 */
+export function parseBatchSuggestions(text: string): BatchReplyEntry[] {
+  const json = extractJson(text);
+  if (!Array.isArray(json)) return [];
+  const out: BatchReplyEntry[] = [];
+  for (const raw of json) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const index = Number(r.index);
+    if (!Number.isInteger(index) || index < 0) continue;
+    const rawSuggestions = Array.isArray(r.suggestions) ? r.suggestions : [];
+    const suggestions = parseSuggestions(JSON.stringify(rawSuggestions));
+    if (suggestions.length > 0) {
+      out.push({ index, suggestions });
+    }
+  }
+  return out.sort((a, b) => a.index - b.index);
 }
 
 /**

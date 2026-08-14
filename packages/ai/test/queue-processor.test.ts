@@ -4,6 +4,7 @@ import {
   buildPrompt,
   buildManualPrompt,
   inputHash,
+  parseBatchSuggestions,
   parseTagPayload,
   parseSuggestions,
   type AiQueueDeps,
@@ -133,5 +134,20 @@ describe("AiQueueProcessor", () => {
     const prompt = buildManualPrompt(item, ["生活美学", "AI"]);
     expect(prompt).toContain("已有Tag：生活美学, AI");
     expect(buildManualPrompt(item)).toContain("已有Tag：无");
+  });
+
+  it("parseBatchSuggestions maps index -> suggestions and skips invalid entries", () => {
+    const reply = JSON.stringify([
+      { index: 0, suggestions: [{ type: "suggested_tag", payload: '["生活美学"]' }] },
+      { index: 2, suggestions: [{ type: "suggested_topic", payload: "设计" }] },
+      { index: 1, suggestions: [{ type: "bad", payload: "x" }] },
+      { index: "x", suggestions: [] },
+    ]);
+    const entries = parseBatchSuggestions(reply);
+    expect(entries).toHaveLength(2);
+    expect(entries[0].index).toBe(0);
+    expect(entries[0].suggestions[0].type).toBe("suggested_tag");
+    expect(entries[1].index).toBe(2);
+    expect(entries[1].suggestions[0].type).toBe("suggested_topic");
   });
 });

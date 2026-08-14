@@ -488,3 +488,14 @@
   background: transparent;
   color: var(--text-muted);
 }
+.omni-batch-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.omni-batch-filter select,
+.omni-batch-filter input {
+  max-width: 160px;
+}

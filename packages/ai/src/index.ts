@@ -13,10 +13,11 @@ export type {
   ProviderConfig,
   ProviderType,
 } from "./provider.js";
-export { AiQueueProcessor, inputHash, buildPrompt, buildManualPrompt, parseSuggestions, parseTagPayload } from "./queue-processor.js";
+export { AiQueueProcessor, inputHash, buildPrompt, buildManualPrompt, parseSuggestions, parseTagPayload, parseBatchSuggestions } from "./queue-processor.js";
 export type {
   AiQueueDeps,
   AiQueueRunResult,
+  BatchReplyEntry,
   ParsedSuggestion,
   QueueItemWithContent,
   SuggestionType,

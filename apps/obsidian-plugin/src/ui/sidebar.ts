@@ -9,6 +9,7 @@ export interface OmniController {
   openAiReview(): Promise<void>;
   openTagTopic(): Promise<void>;
   openManualAI(): Promise<void>;
+  openManualAIBatch(): Promise<void>;
   openSettings(): Promise<void>;
   startEngine(): Promise<void>;
   stopEngine(): Promise<void>;
@@ -121,6 +122,7 @@ export class OmniSidebarView extends ItemView {
     this.addActionButton(contentRow, "AI 建议审核", () => this.ctrl.openAiReview());
     this.addActionButton(contentRow, "Tag/Topic 管理", () => this.ctrl.openTagTopic());
     this.addActionButton(contentRow, "Manual AI 模板", () => this.ctrl.openManualAI());
+    this.addActionButton(contentRow, "Manual AI 批量", () => this.ctrl.openManualAIBatch());
     this.addActionButton(contentRow, "扫描本地文件", () => this.withBusy(async () => { await this.ctrl.scanLocalFiles(); }));
 
     container

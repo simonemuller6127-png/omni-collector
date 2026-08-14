@@ -418,6 +418,46 @@ describe("TaskService (internal, fake provider)", () => {
     }
   });
 
+  it("TASK_AI_MANUAL_BATCH saves suggestions per indexed collection", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const c1 = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv1", { url: "https://x/1", title: "T1" });
+      const c2 = new CollectionRepository(db).upsertByPlatformItem("youtube", "yt1", { url: "https://x/2", title: "T2" });
+      manager.close();
+
+      const reply = JSON.stringify([
+        { index: 0, suggestions: [{ type: "suggested_tag", payload: '["生活美学"]' }] },
+        { index: 1, suggestions: [{ type: "suggested_topic", payload: "设计" }] },
+      ]);
+      const res = await service.handlers().TASK_AI_MANUAL_BATCH?.(
+        makeMsg("TASK_AI_MANUAL_BATCH", { collection_ids: [c1.id, c2.id], reply }),
+      );
+      expect(res?.message_type).toBe("TASK_COMPLETE");
+      expect((res?.payload?.saved as number)).toBe(2);
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const rows = (verifier
+        .getDb()
+        .prepare("SELECT collection_id, suggestion_type, model FROM ai_suggestions")
+        .all() as Array<{ collection_id: string; suggestion_type: string; model: string }>)
+        .sort((a, b) => (a.collection_id < b.collection_id ? -1 : 1));
+      expect(rows).toEqual(
+        [
+          { collection_id: c1.id, suggestion_type: "suggested_tag", model: "manual-batch" },
+          { collection_id: c2.id, suggestion_type: "suggested_topic", model: "manual-batch" },
+        ].sort((a, b) => (a.collection_id < b.collection_id ? -1 : 1)),
+      );
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
   it("TASK_ORGANIZE updates organize state and validates input", async () => {
     const dataDir = makeDataDir();
     const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });

@@ -513,6 +513,16 @@ export class EngineClient {
     });
   }
 
+  /** Manual 批量：一次提交多收藏的打包回复（PRD 19.3 批量版）。 */
+  async submitManualAIBatch(collectionIds: string[], reply: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_AI_MANUAL_BATCH",
+      payload: { collection_ids: collectionIds, reply },
+    });
+  }
+
   watchExit(cb: (code: number) => void): void {
     this.proc?.on("exit", (code) => cb(code ?? -1));
   }

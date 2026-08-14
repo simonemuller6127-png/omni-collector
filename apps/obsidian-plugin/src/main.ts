@@ -1,6 +1,7 @@
 import path from "node:path";
 import { Modal, Notice, Plugin, requestUrl, Setting, WorkspaceLeaf } from "obsidian";
 import { randomUUID } from "node:crypto";
+import type { CollectionDTO } from "@omni/shared-core";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type OmniSettings } from "./settings.js";
 import { OmniSettingTab } from "./settings-tab.js";
 import { EngineClient } from "./comm/socket-client.js";
@@ -11,6 +12,7 @@ import { OmniCollectionListView, VIEW_TYPE_OMNI_LIST, type ListDataSource } from
 import { OmniCollectionDetailView, VIEW_TYPE_OMNI_DETAIL, type DetailDataSource } from "./ui/collection-detail.js";
 import { MarkdownBuilder, sanitizeFilename } from "./markdown/markdown-builder.js";
 import { openManualAIModal } from "./ui/manual-ai.js";
+import { openManualAIBatchModal } from "./ui/manual-ai-batch.js";
 
 export default class OmniCollectorPlugin extends Plugin {
   pluginSettings!: OmniSettings;
@@ -90,6 +92,7 @@ export default class OmniCollectorPlugin extends Plugin {
         review: (id, status) => this.engine.reviewAiSuggestion(id, status).then(() => undefined),
         undo: (id) => this.engine.undoAiSuggestion(id).then(() => undefined),
         openManualAI: () => void this.openManualAIPicker(),
+        openManualAIBatch: () => void this.openManualAIBatchPicker(),
       };
       return new OmniAiReviewView(leaf, source);
     });
@@ -127,6 +130,13 @@ export default class OmniCollectorPlugin extends Plugin {
       name: "Manual AI 模板（选择收藏）",
       callback: () => {
         void this.openManualAIPicker();
+      },
+    });
+    this.addCommand({
+      id: "open-manual-ai-batch",
+      name: "Manual AI 批量（打包 N 条收藏）",
+      callback: () => {
+        void this.openManualAIBatchPicker();
       },
     });
     this.addCommand({
@@ -289,6 +299,7 @@ export default class OmniCollectorPlugin extends Plugin {
       openAiReview: () => this.openAiReviewView(),
       openTagTopic: () => this.openTagTopicView(),
       openManualAI: () => this.openManualAIPicker(),
+      openManualAIBatch: () => this.openManualAIBatchPicker(),
       openSettings: () => this.openSettingsTab(),
       startEngine: async () => {
         await this.engine.startEngine("query");
@@ -430,6 +441,30 @@ export default class OmniCollectorPlugin extends Plugin {
         }
       }
     }
+    // Tag 聚合页（PRD 16 / 关系图谱联动）
+    const tags = await this.engine.listTags().catch(() => []);
+    if (tags.length > 0) {
+      const tagDir = `${folder}/Tags`;
+      if (!(await vault.adapter.exists(tagDir))) {
+        await vault.createFolder(tagDir).catch(() => {});
+      }
+      for (const tag of tags) {
+        const links = collections
+          .filter((c) => (c.tags ?? []).includes(tag.name))
+          .map((c) => `Omni Collector/${c.platform}/${sanitizeFilename(c.title || c.platformItemId)}`);
+        const hubPath = `${tagDir}/${sanitizeFilename(tag.name)}.md`;
+        try {
+          const content = builder.buildTagHub(tag.name, links);
+          if (await vault.adapter.exists(hubPath)) {
+            await vault.adapter.write(hubPath, content);
+          } else {
+            await vault.create(hubPath, content);
+          }
+        } catch {
+          // 单个 Tag 页失败不中断
+        }
+      }
+    }
     new Notice(`Omni Collector: 已生成/更新 ${count} 个 Markdown`);
   }
 
@@ -512,6 +547,75 @@ export default class OmniCollectorPlugin extends Plugin {
     };
     search.addEventListener("input", () => render(search.value));
     render();
+    modal.open();
+  }
+
+  /** Manual AI 批量入口：按平台/时间段打包 N 条收藏，一次交给网页 AI。 */
+  private async openManualAIBatchPicker(): Promise<void> {
+    const collections = await this.engine.listCollections().catch(() => []);
+    const modal = new Modal(this.app);
+    modal.titleEl.setText("Manual AI 批量打包");
+    const filters = modal.contentEl.createEl("div", { cls: "omni-batch-filter" });
+    const platformSel = filters.createEl("select");
+    platformSel.createEl("option", { text: "全部平台", attr: { value: "" } });
+    for (const p of ["bilibili", "youtube", "xiaohongshu", "makerworld", "xiaoheihe"]) {
+      platformSel.createEl("option", { text: p, attr: { value: p } });
+    }
+    const daysSel = filters.createEl("select");
+    for (const [label, days] of [
+      ["最近 7 天", 7],
+      ["最近 30 天", 30],
+      ["最近 90 天", 90],
+      ["全部时间", 0],
+    ]) {
+      daysSel.createEl("option", { text: String(label), attr: { value: String(days) } });
+    }
+    daysSel.value = "30";
+    const maxInput = filters.createEl("input", {
+      type: "number",
+      attr: { value: "50", min: "1", max: "100", style: "width:70px;" },
+    });
+    const preview = modal.contentEl.createEl("div", { cls: "omni-total" });
+    const runBtn = modal.contentEl.createEl("button", {
+      text: "生成批量模板",
+      cls: "omni-btn omni-btn-primary",
+    });
+
+    const pick = (): CollectionDTO[] => {
+      const platform = platformSel.value;
+      const days = Number(daysSel.value);
+      const max = Math.max(1, Math.min(100, Number(maxInput.value) || 50));
+      const cutoff = days > 0 ? Date.now() - days * 24 * 3600 * 1000 : 0;
+      const filtered = collections
+        .filter((c) => (!platform || c.platform === platform) && (cutoff === 0 || new Date(c.collectedAt).getTime() >= cutoff))
+        .sort((a, b) => {
+          const rank = (x: CollectionDTO): number =>
+            x.organizeStatus === "unorganized" ? 0 : x.organizeStatus === "viewed" ? 1 : 2;
+          return rank(a) - rank(b) || new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime();
+        })
+        .slice(0, max);
+      preview.setText(`当前选中 ${filtered.length} 条（优先未整理）`);
+      return filtered;
+    };
+    const refresh = (): void => void pick();
+    platformSel.addEventListener("change", refresh);
+    daysSel.addEventListener("change", refresh);
+    maxInput.addEventListener("input", refresh);
+    runBtn.addEventListener("click", () => {
+      const items = pick();
+      if (items.length === 0) {
+        new Notice("没有符合条件的收藏");
+        return;
+      }
+      modal.close();
+      openManualAIBatchModal(this.app, items, {
+        submit: (ids, reply) =>
+          this.engine
+            .submitManualAIBatch(ids, reply)
+            .then((res) => Number(res.payload?.saved ?? 0)),
+      });
+    });
+    refresh();
     modal.open();
   }
 
