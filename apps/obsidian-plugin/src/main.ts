@@ -361,6 +361,7 @@ export default class OmniCollectorPlugin extends Plugin {
   }
 
   private async checkAutoSync(): Promise<void> {
+    if (!this.pluginSettings.autoSyncEnabled) return;
     try {
       const statuses = await this.engine.listPlatformStatus();
       for (const s of statuses) {

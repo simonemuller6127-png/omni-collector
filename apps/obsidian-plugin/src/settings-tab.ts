@@ -129,6 +129,16 @@ export class OmniSettingTab extends PluginSettingTab {
       );
 
     containerEl.createEl("h3", { text: "同步计划" });
+    new Setting(containerEl)
+      .setName("启用自动同步")
+      .setDesc("默认关闭；开启后按下方频率/随机窗口/日上限自动同步（风控期建议保持关闭）。")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.pluginSettings.autoSyncEnabled).onChange(async (value) => {
+          this.plugin.pluginSettings.autoSyncEnabled = value;
+          await this.plugin.saveSettings();
+          this.plugin.reloadSyncScheduler();
+        }),
+      );
     const platforms: Array<[string, string]> = [
       ["bilibili", "B站"],
       ["youtube", "YouTube"],

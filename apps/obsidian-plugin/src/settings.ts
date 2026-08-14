@@ -53,6 +53,8 @@ export interface OmniSettings {
   commentBatchUpdateDays: number;
   /** 各平台上次自动同步时间（ISO）。 */
   lastAutoSyncAt: Record<string, string>;
+  /** 自动同步总开关（默认关闭，避免风控期平台被定时触发）。 */
+  autoSyncEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: OmniSettings = {
@@ -88,6 +90,7 @@ export const DEFAULT_SETTINGS: OmniSettings = {
   deepSyncDepth: 50,
   commentBatchUpdateDays: 7,
   lastAutoSyncAt: {},
+  autoSyncEnabled: false,
 };
 
 export async function loadSettings(plugin: Plugin): Promise<OmniSettings> {
