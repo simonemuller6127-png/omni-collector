@@ -132,7 +132,7 @@ export class OmniCollectionListView extends ItemView {
     this.totalEl = container.createEl("div", { cls: "omni-total" });
     this.toolbarEl = container.createEl("div", { cls: "omni-toolbar" });
     this.batchBarEl = container.createEl("div", { cls: "omni-batch-bar" });
-    this.batchBarEl.style.display = "none";
+    this.batchBarEl.addClass("is-hidden");
     this.listEl = container.createEl("div", { cls: "omni-list" });
     await this.refreshList();
   }
@@ -390,10 +390,10 @@ export class OmniCollectionListView extends ItemView {
     const bar = this.batchBarEl;
     bar.empty();
     if (!this.selecting) {
-      bar.style.display = "none";
+      bar.addClass("is-hidden");
       return;
     }
-    bar.style.display = "flex";
+    bar.removeClass("is-hidden");
     bar.createEl("span", { text: `已选 ${this.selected.size} 条`, cls: "omni-meta-text" });
     bar.createEl("button", { text: "全选当前", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
       for (const i of this.currentItems()) this.selected.add(i.id);

@@ -1,5 +1,16 @@
 # Omni Collector
 
+Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and likes from Bilibili, YouTube, Xiaohongshu (Little Red Book), MakerWorld and Xiaoheihe into your vault. It supports AI tagging suggestions (Tag / Topic / Group / Summary), a Tag Atlas with aliases, Topic hub notes linked into the Obsidian graph, local file indexing, and an optional local sync engine (Node.js).
+
+**Highlights**
+
+- Full catalog sync (titles, URLs, covers) for all five platforms.
+- Tag Atlas: platform hashtags are extracted automatically, near-duplicate tags can be merged, aliases resolve to one canonical tag.
+- Tag and Topic hub notes create bidirectional links in the Obsidian graph view.
+- AI suggestions are always reviewed by you before they are written.
+- Manual AI mode works without an API key: copy a packed template (single or batch), paste the AI reply, review and confirm.
+- Sync schedules, rule center, per-platform health lights and anomaly stats are built in.
+
 全平台收藏同步与本地知识管理工具（Obsidian Plugin + 独立本地同步引擎）。
 
 把 **B站 / YouTube / 小红书 / MakerWorld / 小黑盒** 的收藏、点赞、稍后再看自动同步进 Obsidian，并提供 AI 整理建议（Tag / Topic / 分组 / 摘要）、跨平台内容关联、本地文件索引与 Tag Atlas 标签体系。
@@ -65,8 +76,8 @@ Cookie 只保存在本地数据目录（AES-256-GCM 加密，`data/cookies/*.enc
 
 ### 手动安装
 
-1. 从 GitHub Releases 下载 `omni-collector.zip`（或 `main.js` / `manifest.json` / `styles.css`）
-2. 解压到 `<你的库>/.obsidian/plugins/omni-collector/`
+1. 从 GitHub Releases 下载 `main.js` / `manifest.json` / `styles.css` 三个文件
+2. 放入 `<你的库>/.obsidian/plugins/omni-collector/`（目录不存在则新建）
 3. Obsidian 设置 → 第三方插件 → 启用 Omni Collector
 4. 在插件设置中填写数据目录 / Node.js 路径 / Engine 路径
 

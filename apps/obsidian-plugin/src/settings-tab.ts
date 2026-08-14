@@ -14,9 +14,9 @@ export class OmniSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Omni Collector" });
+    new Setting(containerEl).setName("Omni Collector").setHeading();
 
-    containerEl.createEl("h3", { text: "AI" });
+    new Setting(containerEl).setName("AI").setHeading();
     new Setting(containerEl)
       .setName("启用 AI 整理建议")
       .setDesc("开启后同步完成的收藏会进入 AI 队列（批处理，单批 ≤100 条）。")
@@ -68,7 +68,7 @@ export class OmniSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "AI 功能开关" });
+    new Setting(containerEl).setName("AI 功能开关").setHeading();
     new Setting(containerEl)
       .setName("AI Tag 建议")
       .setDesc("关闭后 AI 不再生成 Tag 建议。")
@@ -113,7 +113,7 @@ export class OmniSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "同步" });
+    new Setting(containerEl).setName("同步").setHeading();
     new Setting(containerEl)
       .setName("同步模式")
       .setDesc("catalog = 轻量目录（快）；full = 含详情/评论（慢）。「同步全部」使用此模式。")
@@ -128,7 +128,7 @@ export class OmniSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "同步计划" });
+    new Setting(containerEl).setName("同步计划").setHeading();
     new Setting(containerEl)
       .setName("启用自动同步")
       .setDesc("默认关闭；开启后按下方频率/随机窗口/日上限自动同步（风控期建议保持关闭）。")
@@ -244,7 +244,7 @@ export class OmniSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "Engine" });
+    new Setting(containerEl).setName("Engine").setHeading();
     new Setting(containerEl)
       .setName("自动启动 Engine")
       .setDesc("请求收藏/同步时自动拉起 Engine；关闭后需手动点侧边栏「启动引擎」。")
@@ -268,7 +268,7 @@ export class OmniSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "本地文件" });
+    new Setting(containerEl).setName("本地文件").setHeading();
     new Setting(containerEl)
       .setName("已加入的目录")
       .setDesc("扫描这些目录中的 .md / .pdf，按系统区 URL 自动关联到收藏。")
@@ -347,7 +347,7 @@ export class OmniSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "规则中心" });
+    new Setting(containerEl).setName("规则中心").setHeading();
     const ruleBox = containerEl.createEl("div", { cls: "omni-rule-center" });
     const loadRules = async (): Promise<void> => {
       ruleBox.empty();

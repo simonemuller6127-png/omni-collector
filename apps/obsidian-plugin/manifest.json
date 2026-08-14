@@ -1,15 +1,11 @@
 {
   "id": "omni-collector",
   "name": "Omni Collector",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "minAppVersion": "1.5.0",
-  "description": "全平台收藏同步与本地知识管理（B站 / YouTube / 小红书 / MakerWorld / 小黑盒），支持 AI 整理建议与 ContentGroup 关联识别。",
+  "description": "Multi-platform favorite/like collector (Bilibili, YouTube, Xiaohongshu, MakerWorld, Xiaoheihe) with AI tagging, Tag Atlas aliases, Topic hubs, local file linking and graph integration.",
   "author": "Omni Collector",
-  "authorUrl": "https://github.com/simonemuller6127-png/omni-collector",
+  "authorUrl": "https://github.com/simonemuller6127-png",
   "isDesktopOnly": true,
-  "fundingUrl": "",
-  "main": "main.js",
-  "styles": [
-    "styles.css"
-  ]
+  "fundingUrl": ""
 }

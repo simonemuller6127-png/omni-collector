@@ -201,7 +201,7 @@ export default class OmniCollectorPlugin extends Plugin {
       leaf = workspace.getRightLeaf(false);
       if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI, active: true });
     }
-    if (leaf) workspace.revealLeaf(leaf);
+  if (leaf) workspace.setActiveLeaf(leaf);
   }
 
   onunload(): void {
@@ -544,7 +544,7 @@ export default class OmniCollectorPlugin extends Plugin {
     } else {
       await leaf.setViewState({ type: VIEW_TYPE_OMNI_LIST, active: true, state: { platform: platform ?? null } });
     }
-    if (leaf) workspace.revealLeaf(leaf);
+  if (leaf) workspace.setActiveLeaf(leaf);
   }
 
   private async openCollectionDetail(collectionId: string): Promise<void> {
@@ -556,7 +556,7 @@ export default class OmniCollectorPlugin extends Plugin {
     } else {
       await leaf.setViewState({ type: VIEW_TYPE_OMNI_DETAIL, active: true, state: { collectionId } });
     }
-    if (leaf) workspace.revealLeaf(leaf);
+  if (leaf) workspace.setActiveLeaf(leaf);
   }
 
   private async openAiReviewView(): Promise<void> {
@@ -566,7 +566,7 @@ export default class OmniCollectorPlugin extends Plugin {
       leaf = workspace.getRightLeaf(false);
       if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_AI, active: true });
     }
-    if (leaf) workspace.revealLeaf(leaf);
+  if (leaf) workspace.setActiveLeaf(leaf);
   }
 
   private async openTagTopicView(): Promise<void> {
@@ -576,7 +576,7 @@ export default class OmniCollectorPlugin extends Plugin {
       leaf = workspace.getRightLeaf(false);
       if (leaf) await leaf.setViewState({ type: VIEW_TYPE_OMNI_TAGS, active: true });
     }
-    if (leaf) workspace.revealLeaf(leaf);
+  if (leaf) workspace.setActiveLeaf(leaf);
   }
 
   /** Manual AI 全局入口：先选收藏，再打开模板（PRD 19.3）。 */
