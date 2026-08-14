@@ -2,81 +2,87 @@
 
 全平台收藏同步与本地知识管理工具（Obsidian Plugin + 独立本地同步引擎）。
 
-把 **B站 / YouTube / 小红书 / MakerWorld / 小黑盒** 的收藏、点赞、稍后再看自动同步进 Obsidian，并提供 AI 整理建议（Tag / Topic / 分组 / 摘要）、跨平台内容关联、本地文件索引与万条级性能。
+把 **B站 / YouTube / 小红书 / MakerWorld / 小黑盒** 的收藏、点赞、稍后再看自动同步进 Obsidian，并提供 AI 整理建议（Tag / Topic / 分组 / 摘要）、跨平台内容关联、本地文件索引与 Tag Atlas 标签体系。
 
-## 核心能力
+## 功能
 
 ### 平台同步
-- **B站**：全部收藏夹 + 稍后再看（wbi 签名直连，评论采集）
-- **YouTube**：Liked 全量列表（yt-dlp + cookies，字幕提取默认关闭）
-- **小红书**：收藏 + 点赞（x-s 签名直连，分页全量）
-- **MakerWorld**：收藏 + 点赞（可选开关，Cloudflare 持久化会话）
-- **小黑盒**：帖子收藏全量（浏览器驱动，失效内容保留并标记）
 
-初始同步按 PRD v4.2：**全量拉取所有收藏的标题 / URL / 封面**（轻量元数据）；完整详情按需执行。
+- B站：全部收藏夹 + 稍后再看（WBI 签名直连，评论采集）
+- YouTube：Liked 全量列表（yt-dlp + cookies，字幕提取默认关闭）
+- 小红书：收藏 + 点赞（x-s 签名直连，分页全量）
+- MakerWorld：收藏 + 点赞（可选开关，Cloudflare 持久化会话）
+- 小黑盒：帖子收藏全量（浏览器驱动，失效内容保留并标记）
+
+初始同步按 PRD v4.2 拉取所有收藏的标题 / URL / 封面（轻量元数据）；完整详情按需执行。
 
 ### 本地知识管理
-- 收藏列表：纯文字 / 卡片缩略图（小红书式错落布局）双视图，平台 / 类型 / 状态 / 优先级筛选
+
+- 收藏列表：纯文字 / 卡片缩略图双视图，平台 / 类型 / 状态 / 优先级过滤
 - 内容预览：B站 / YouTube 官方嵌入播放器、正文按需抓取（不落盘）、评论展示
 - 整理工作流：未整理 → 已查看 → 已整理 → 已归档；优先级（普通/重要/项目/知识）
 - 稍后再看独立处理：转收藏 / 归档完成
 - 手动 Tag / Topic + 批量操作（批量 Tag / Topic / 优先级 / 整理 / 转收藏 / 归档）
+- Tag Atlas：平台标签自动提取、别名系统、疑似重复一键合并、Tag/Topic 聚合页接入官方关系图谱（双链）
 - Related Collections：同 ContentGroup 或同实体跨平台关联
 - 本地文件：多目录扫描（.md / .pdf），按系统区 URL 自动关联收藏；自动 / 手动扫描
-- Markdown 协议：系统区（Engine 自动写入）+ 用户区（永不覆盖），Dataview 模板
-- 封面本地缓存、正文 10 分钟缓存、1 万条收藏查询 <500ms
+- Markdown 协议：系统区（Engine 自动写入）与用户区（永不覆盖）隔离，Dataview 模板
 
 ### AI（可选，默认关闭）
+
 - 批处理队列（单批 ≤100 条，input_hash 去重，失败隔离）
 - Suggestion 审核机制：AI 只生成建议，用户确认后才写入
-- **Manual 模式（PRD 19.3）**：复制提示词模板到任意 AI 工具，粘贴回复自动解析为建议
-- Provider：DeepSeek / OpenAI（OpenAI 兼容接口），设置中配置
+- 功能级开关：Tag / Topic / 摘要可分别启用，每日调用上限（默认 50）
+- **Manual 模式（PRD 19.3）**：复制提示词模板到任意 AI 工具，粘贴回复自动解析为建议；支持批量打包 N 条收藏一次处理
+- Provider：DeepSeek / OpenAI（OpenAI 兼容接口）
+
+### 同步计划与规则中心
+
+- 各平台自动同步频率（每日 / 每周）、随机执行窗口、单日同步上限（总开关默认关闭）
+- 规则中心：全部业务规则统一查看 / 修改 / 恢复默认，带变更记录
+- 平台健康指示灯（绿 / 黄 / 红 + 原因）与异常内容统计（下架 / 同步失败 / 文件丢失）
 
 ## 架构
 
 ```
 Obsidian Plugin (apps/obsidian-plugin)
-  └─ 本地 Socket/WebSocket 通信 (packages/shared-core 协议)
-        └─ 独立 Engine (apps/engine, Node.js)
-              ├─ Adapters (packages/adapters): 五平台采集
-              ├─ AI Queue (packages/ai): 批处理 / 建议
-              ├─ SQLite (packages/database): 收藏 / 评论 / 建议 / 分组 / 文件索引
-              └─ ContentGroup / FileIndex / Scheduler
+   └── 本地 Socket / WebSocket 通信 (packages/shared-core 协议)
+         └── 独立 Engine (apps/engine, Node.js)
+               ├── Adapters (packages/adapters): 五平台采集
+               ├── AI Queue (packages/ai): 批处理 / 建议
+               ├── SQLite (packages/database): 收藏 / 评论 / 建议 / 分组 / 文件索引
+               └── ContentGroup / FileIndex / Scheduler
 ```
 
 Cookie 只保存在本地数据目录（AES-256-GCM 加密，`data/cookies/*.enc`），不上传。
 
-## 快速开始
+## 安装
+
+### 通过 BRAT（推荐，正式上架前）
+
+1. 安装 [BRAT](https://obsidian.md/plugins?id=obsidian42-brat)
+2. 添加仓库：`simonemuller6127-png/omni-collector`
+
+### 手动安装
+
+1. 从 GitHub Releases 下载 `omni-collector.zip`（或 `main.js` / `manifest.json` / `styles.css`）
+2. 解压到 `<你的库>/.obsidian/plugins/omni-collector/`
+3. Obsidian 设置 → 第三方插件 → 启用 Omni Collector
+4. 在插件设置中填写数据目录 / Node.js 路径 / Engine 路径
+
+## 开发
 
 ```bash
 pnpm install
 pnpm build
+pnpm test
 ```
 
-### 部署到 Obsidian
-
-1. 构建插件：`pnpm --filter @omni/obsidian-plugin build`
-2. 部署 Engine：`node apps/engine/scripts/deploy.mjs --data-dir <你的数据目录>`
-3. 复制 `main.js` / `manifest.json` / `styles.css` 到 `<库>/.obsidian/plugins/omni-collector/`
-4. Obsidian 设置 → 第三方插件 → 启用；在插件设置中填入数据目录 / Node.js 路径 / Engine 路径
-5. 命令面板「立即同步（全部平台）」
-
-### 平台登录
-
-- 各平台需先在**你的真实浏览器**登录，导出 Cookie（JSON 数组格式）后写入 `data/cookies/{platform}.enc`（用 CookieCipher）
-- MakerWorld 需一次性通过 Cloudflare 验证（引擎持久化 profile）
-- B站 / 小红书触发风控时请停止自动化测试，冷却后重新登录
-
-## 测试
+部署 Engine：
 
 ```bash
-pnpm test              # 默认跳过 live 测试（不访问外部平台）
-OMNI_RUN_LIVE=1 pnpm test   # 显式运行 live 测试（需有效 Cookie）
+node apps/engine/scripts/deploy.mjs --data-dir <你的数据目录>
 ```
-
-## Release
-
-打 tag（`v0.x.x`）自动触发 GitHub Actions 构建并发布 `main.js` / `manifest.json` / `styles.css` 资产。
 
 ## License
 
