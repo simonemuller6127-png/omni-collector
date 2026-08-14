@@ -14,8 +14,6 @@ export class OmniSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName("Omni Collector").setHeading();
-
     new Setting(containerEl).setName("AI").setHeading();
     new Setting(containerEl)
       .setName("启用 AI 整理建议")

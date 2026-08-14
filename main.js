@@ -3797,7 +3797,6 @@ var OmniSettingTab = class extends import_obsidian2.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian2.Setting(containerEl).setName("Omni Collector").setHeading();
     new import_obsidian2.Setting(containerEl).setName("AI").setHeading();
     new import_obsidian2.Setting(containerEl).setName("\u542F\u7528 AI \u6574\u7406\u5EFA\u8BAE").setDesc("\u5F00\u542F\u540E\u540C\u6B65\u5B8C\u6210\u7684\u6536\u85CF\u4F1A\u8FDB\u5165 AI \u961F\u5217\uFF08\u6279\u5904\u7406\uFF0C\u5355\u6279 \u2264100 \u6761\uFF09\u3002").addToggle(
       (toggle) => toggle.setValue(this.plugin.pluginSettings.aiEnabled).onChange(async (value) => {
