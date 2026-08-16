@@ -534,3 +534,8 @@
   flex: none;
   align-items: center;
 }
+.omni-cookie-input {
+  width: 100%;
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+}

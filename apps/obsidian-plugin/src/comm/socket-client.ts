@@ -225,6 +225,41 @@ export class EngineClient {
     });
   }
 
+  /** 导入平台 Cookie（Cookie-Editor JSON / "k=v" 字符串），引擎加密后仅存本地。 */
+  async importCookie(platform: string, cookiesJson: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "COOKIE_IMPORT",
+      payload: { platform, cookies_json: cookiesJson },
+    });
+  }
+
+  /** 查询平台 Cookie 状态（不返回明文）。 */
+  async cookieStatus(platform: string): Promise<{
+    platform: string;
+    has_cookie: boolean;
+    cookie_count: number;
+    valid: boolean;
+    account_status: string;
+    account_error_reason: string | null;
+  }> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "COOKIE_STATUS",
+      payload: { platform },
+    });
+    return (res.payload ?? {}) as {
+      platform: string;
+      has_cookie: boolean;
+      cookie_count: number;
+      valid: boolean;
+      account_status: string;
+      account_error_reason: string | null;
+    };
+  }
+
   /** 列出待审核 AI 建议。 */
   async listAiSuggestions(): Promise<
     Array<{

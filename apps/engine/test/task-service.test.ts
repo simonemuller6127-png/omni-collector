@@ -14,7 +14,7 @@ import {
   TagRepository,
   TopicRepository,
 } from "@omni/database";
-import { TaskService } from "../src/index.js";
+import { CookieCipher, TaskService } from "../src/index.js";
 
 const REAL_MIGRATIONS = "D:/Github/My_Project/omni-collection/packages/database/migrations";
 const tmpDirs: string[] = [];
@@ -454,6 +454,37 @@ describe("TaskService (internal, fake provider)", () => {
         ].sort((a, b) => (a.collection_id < b.collection_id ? -1 : 1)),
       );
       verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("COOKIE_IMPORT encrypts cookies locally and COOKIE_STATUS reports them", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const h = service.handlers();
+      const bad = await h.COOKIE_IMPORT?.(makeMsg("COOKIE_IMPORT", { platform: "bilibili", cookies_json: "[]" }));
+      expect(bad?.message_type).toBe("TASK_ERROR");
+
+      const json = JSON.stringify([{ name: "SESSDATA", value: "abc", domain: ".bilibili.com" }]);
+      const ok = await h.COOKIE_IMPORT?.(makeMsg("COOKIE_IMPORT", { platform: "bilibili", cookies_json: json }));
+      expect(ok?.message_type).toBe("TASK_COMPLETE");
+      expect(ok?.payload?.cookie_count).toBe(1);
+
+      const status = await h.COOKIE_STATUS?.(makeMsg("COOKIE_STATUS", { platform: "bilibili" }));
+      expect(status?.message_type).toBe("TASK_COMPLETE");
+      expect(status?.payload).toMatchObject({
+        platform: "bilibili",
+        has_cookie: true,
+        cookie_count: 1,
+        valid: true,
+        account_status: "active",
+      });
+      expect(new CookieCipher(dataDir).decryptCookie("bilibili")).toBe(json);
+
+      const unknown = await h.COOKIE_STATUS?.(makeMsg("COOKIE_STATUS", { platform: "nope" }));
+      expect(unknown?.message_type).toBe("TASK_ERROR");
     } finally {
       service.dispose();
     }

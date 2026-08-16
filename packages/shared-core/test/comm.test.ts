@@ -37,5 +37,8 @@ describe("comm protocol v1.1 tag/topic/ai additions", () => {
     expect(validateOmniMessage(msg("TASK_AI_MANUAL_BATCH", {})).ok).toBe(false);
     expect(validateOmniMessage(msg("RULE_LIST", {})).ok).toBe(true);
     expect(validateOmniMessage(msg("TASK_COMMENTS", {})).ok).toBe(true);
+    expect(validateOmniMessage(msg("COOKIE_IMPORT", { platform: "bilibili", cookies_json: "[]" })).ok).toBe(true);
+    expect(validateOmniMessage(msg("COOKIE_IMPORT", { platform: "bilibili" })).ok).toBe(false);
+    expect(validateOmniMessage(msg("COOKIE_STATUS", { platform: "bilibili" })).ok).toBe(true);
   });
 });

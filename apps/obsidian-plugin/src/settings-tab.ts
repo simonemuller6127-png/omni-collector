@@ -242,6 +242,50 @@ export class OmniSettingTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(containerEl).setName("平台 Cookie").setHeading();
+    for (const [key, label] of platforms) {
+      let pasted = "";
+      const statusRow = new Setting(containerEl).setName(`${label} Cookie`).setDesc("正在读取状态…");
+      statusRow.addTextArea((ta) => {
+        ta.setPlaceholder("粘贴 Cookie-Editor 导出的 JSON");
+        ta.onChange((v) => {
+          pasted = v;
+        });
+        ta.inputEl.setAttr("rows", "3");
+        ta.inputEl.addClass("omni-cookie-input");
+      });
+      const refreshStatus = async (): Promise<void> => {
+        try {
+          const s = await this.plugin.engine.cookieStatus(key);
+          const status = s.has_cookie
+            ? `已导入 ${s.cookie_count} 个 Cookie（${s.valid ? "格式有效" : "格式异常"}）`
+            : "未导入 Cookie";
+          const account = s.account_status === "error" ? ` · 账号异常：${s.account_error_reason ?? ""}` : "";
+          statusRow.setDesc(`${status} · 账号状态：${s.account_status}${account}`);
+        } catch {
+          statusRow.setDesc("Engine 未连接，导入后点击「导入」保存即可。");
+        }
+      };
+      statusRow.addButton((btn) =>
+        btn.setButtonText("导入").setCta().onClick(async () => {
+          const value = pasted.trim();
+          if (!value) {
+            new Notice("请先粘贴 Cookie JSON");
+            return;
+          }
+          try {
+            const res = await this.plugin.engine.importCookie(key, value);
+            new Notice(`${label} Cookie 已导入（${String(res.payload?.cookie_count ?? "?")} 个）`);
+            pasted = "";
+            await refreshStatus();
+          } catch (err) {
+            new Notice(`导入失败：${(err as Error).message}`);
+          }
+        }),
+      );
+      void refreshStatus();
+    }
+
     new Setting(containerEl).setName("Engine").setHeading();
     new Setting(containerEl)
       .setName("自动启动 Engine")

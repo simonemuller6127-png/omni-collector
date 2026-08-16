@@ -3937,6 +3937,47 @@ var OmniSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.updateRule("makerworld_sync_likes", String(value));
       })
     );
+    new import_obsidian2.Setting(containerEl).setName("\u5E73\u53F0 Cookie").setHeading();
+    for (const [key, label] of platforms) {
+      let pasted = "";
+      const statusRow = new import_obsidian2.Setting(containerEl).setName(`${label} Cookie`).setDesc("\u6B63\u5728\u8BFB\u53D6\u72B6\u6001\u2026");
+      statusRow.addTextArea((ta) => {
+        ta.setPlaceholder("\u7C98\u8D34 Cookie-Editor \u5BFC\u51FA\u7684 JSON");
+        ta.onChange((v) => {
+          pasted = v;
+        });
+        ta.inputEl.setAttr("rows", "3");
+        ta.inputEl.addClass("omni-cookie-input");
+      });
+      const refreshStatus = async () => {
+        try {
+          const s = await this.plugin.engine.cookieStatus(key);
+          const status = s.has_cookie ? `\u5DF2\u5BFC\u5165 ${s.cookie_count} \u4E2A Cookie\uFF08${s.valid ? "\u683C\u5F0F\u6709\u6548" : "\u683C\u5F0F\u5F02\u5E38"}\uFF09` : "\u672A\u5BFC\u5165 Cookie";
+          const account = s.account_status === "error" ? ` \xB7 \u8D26\u53F7\u5F02\u5E38\uFF1A${s.account_error_reason ?? ""}` : "";
+          statusRow.setDesc(`${status} \xB7 \u8D26\u53F7\u72B6\u6001\uFF1A${s.account_status}${account}`);
+        } catch {
+          statusRow.setDesc("Engine \u672A\u8FDE\u63A5\uFF0C\u5BFC\u5165\u540E\u70B9\u51FB\u300C\u5BFC\u5165\u300D\u4FDD\u5B58\u5373\u53EF\u3002");
+        }
+      };
+      statusRow.addButton(
+        (btn) => btn.setButtonText("\u5BFC\u5165").setCta().onClick(async () => {
+          const value = pasted.trim();
+          if (!value) {
+            new import_obsidian2.Notice("\u8BF7\u5148\u7C98\u8D34 Cookie JSON");
+            return;
+          }
+          try {
+            const res = await this.plugin.engine.importCookie(key, value);
+            new import_obsidian2.Notice(`${label} Cookie \u5DF2\u5BFC\u5165\uFF08${String(res.payload?.cookie_count ?? "?")} \u4E2A\uFF09`);
+            pasted = "";
+            await refreshStatus();
+          } catch (err) {
+            new import_obsidian2.Notice(`\u5BFC\u5165\u5931\u8D25\uFF1A${err.message}`);
+          }
+        })
+      );
+      void refreshStatus();
+    }
     new import_obsidian2.Setting(containerEl).setName("Engine").setHeading();
     new import_obsidian2.Setting(containerEl).setName("\u81EA\u52A8\u542F\u52A8 Engine").setDesc("\u8BF7\u6C42\u6536\u85CF/\u540C\u6B65\u65F6\u81EA\u52A8\u62C9\u8D77 Engine\uFF1B\u5173\u95ED\u540E\u9700\u624B\u52A8\u70B9\u4FA7\u8FB9\u680F\u300C\u542F\u52A8\u5F15\u64CE\u300D\u3002").addToggle(
       (toggle) => toggle.setValue(this.plugin.pluginSettings.autoStartEngine).onChange(async (value) => {
@@ -4082,6 +4123,8 @@ var MESSAGE_TYPES = [
   "ENGINE_STOP",
   "TASK_SYNC",
   "TASK_COMMENTS",
+  "COOKIE_IMPORT",
+  "COOKIE_STATUS",
   "TASK_AI",
   "TASK_GROUP",
   "TASK_ORGANIZE",
@@ -4117,6 +4160,8 @@ var REQUIRED_PAYLOAD_FIELDS = {
   ENGINE_START: ["task"],
   TASK_SYNC: ["mode"],
   TASK_COMMENTS: [],
+  COOKIE_IMPORT: ["platform", "cookies_json"],
+  COOKIE_STATUS: ["platform"],
   TASK_AI: ["collection_id"],
   TASK_GROUP: [],
   TASK_ORGANIZE: ["collection_id", "organize_status"],
@@ -4351,6 +4396,25 @@ var EngineClient = class {
       message_type: "RULE_UPDATE",
       payload: { rule_key: key, rule_value: value }
     });
+  }
+  /** 导入平台 Cookie（Cookie-Editor JSON / "k=v" 字符串），引擎加密后仅存本地。 */
+  async importCookie(platform, cookiesJson) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "COOKIE_IMPORT",
+      payload: { platform, cookies_json: cookiesJson }
+    });
+  }
+  /** 查询平台 Cookie 状态（不返回明文）。 */
+  async cookieStatus(platform) {
+    const res = await this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "COOKIE_STATUS",
+      payload: { platform }
+    });
+    return res.payload ?? {};
   }
   /** 列出待审核 AI 建议。 */
   async listAiSuggestions() {

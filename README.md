@@ -69,6 +69,24 @@ Cookie 只保存在本地数据目录（AES-256-GCM 加密，`data/cookies/*.enc
 
 ## 安装
 
+### 平台登录 / Cookie 设置（必读）
+
+> [!IMPORTANT]
+> **The plugin cannot log you in.** You must log in to each platform in your own browser first, then import the cookies into the plugin.
+
+1. Install the **Cookie-Editor** browser extension (search it in the Chrome or Edge extension store).
+2. Log in to the platform in your browser (e.g. https://www.bilibili.com or https://www.xiaohongshu.com).
+3. On the logged-in page, open Cookie-Editor → **Export** → **Copy as JSON**.
+4. Open Obsidian → Omni Collector settings → **Platform Cookie** → pick the platform → paste the JSON → click **Import**.
+5. Run the sync from the Omni Collector sidebar.
+
+> Both Cookie-Editor JSON arrays and `k=v; k2=v2` header strings are accepted. Cookies are encrypted and stored only in your local data directory (`data/cookies/*.enc`); they are never uploaded.
+
+> [!IMPORTANT] 中文版
+> 插件无法代替你登录。请先在浏览器里登录平台，再用 **Cookie-Editor** 扩展导出 Cookie 后导入插件：
+> ① 安装浏览器扩展 Cookie-Editor（Chrome / Edge 商店搜索）→ ② 浏览器登录平台（如 bilibili.com / xiaohongshu.com）→ ③ 在登录页点 Cookie-Editor 图标 → Export → Copy as JSON → ④ Obsidian → Omni Collector 设置 → 「平台 Cookie」→ 选择平台 → 粘贴 JSON → 点「导入」→ ⑤ 回侧边栏同步。
+> 支持 JSON 数组和 `SESSDATA=xxx; bili_jct=yyy` 字符串格式；Cookie 只加密保存在本地 `data/cookies/*.enc`，绝不上传。
+
 ### 通过 BRAT（推荐，正式上架前）
 
 1. 安装 [BRAT](https://obsidian.md/plugins?id=obsidian42-brat)

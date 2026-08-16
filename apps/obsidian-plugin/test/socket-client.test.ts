@@ -105,6 +105,25 @@ describe("EngineClient", () => {
           message_type: "TASK_COMPLETE",
           payload: { task: "ai_review_undo" },
         }),
+        COOKIE_IMPORT: () => ({
+          request_id: "",
+          timestamp: new Date().toISOString(),
+          message_type: "TASK_COMPLETE",
+          payload: { task: "cookie_import", platform: "bilibili", cookie_count: 2 },
+        }),
+        COOKIE_STATUS: () => ({
+          request_id: "",
+          timestamp: new Date().toISOString(),
+          message_type: "TASK_COMPLETE",
+          payload: {
+            platform: "bilibili",
+            has_cookie: true,
+            cookie_count: 2,
+            valid: true,
+            account_status: "active",
+            account_error_reason: null,
+          },
+        }),
       },
     });
     const info = await server.start({ wsToken: "tok2" });
@@ -126,5 +145,9 @@ describe("EngineClient", () => {
     expect(topics[0].name).toBe("设计");
     expect((await client.renameTopic("p1", "设计思维")).message_type).toBe("TASK_COMPLETE");
     expect((await client.undoAiSuggestion("s1")).message_type).toBe("TASK_COMPLETE");
+    expect((await client.importCookie("bilibili", "[]")).payload?.cookie_count).toBe(2);
+    const cs = await client.cookieStatus("bilibili");
+    expect(cs.has_cookie).toBe(true);
+    expect(cs.cookie_count).toBe(2);
   });
 });

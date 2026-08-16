@@ -4,6 +4,7 @@ import type { AIProvider } from "@omni/ai";
 import { parseBatchSuggestions, parseSuggestions, parseTagPayload } from "@omni/ai";
 import {
   AIRepository,
+  AccountRepository,
   CollectionRepository,
   CommentRepository,
   ContentGroupRepository,
@@ -17,9 +18,10 @@ import type { CollectionDTO } from "@omni/shared-core";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
 import { ContentGroupService, normalizeEntity } from "../group/content-group-service.js";
 import { FileIndexer } from "../fileindex/file-indexer.js";
-import { BrowserSessionManager } from "../sync/browser-session.js";
+import { BrowserSessionManager, parseStoredCookies } from "../sync/browser-session.js";
+import { CookieCipher } from "../crypto/cookie-cipher.js";
 import { XiaohongshuAdapter } from "@omni/adapters";
-import { SyncRunner } from "../sync/sync-runner.js";
+import { SUPPORTED_PLATFORMS, SyncRunner } from "../sync/sync-runner.js";
 import type { SyncMode } from "../sync/sync-pipeline.js";
 import type { CommHandler } from "./comm-server.js";
 
@@ -102,6 +104,8 @@ export class TaskService {
       AI_REVIEW_UPDATE: (msg) => this.aiReviewUpdate(msg),
       AI_REVIEW_UNDO: (msg) => this.aiReviewUndo(msg),
       RULE_LIST: (msg) => this.ruleList(msg),
+      COOKIE_IMPORT: (msg) => this.cookieImport(msg),
+      COOKIE_STATUS: (msg) => this.cookieStatus(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
     };
   }
@@ -158,6 +162,60 @@ export class TaskService {
       });
     } catch (err) {
       return error(msg.request_id, "RULE_002", `RULE_002: ${(err as Error).message}`);
+    }
+  }
+
+  /** 导入平台 Cookie（Cookie-Editor JSON 或 "k=v; k2=v2"），AES-256-GCM 加密后仅存本地。 */
+  async cookieImport(msg: OmniMessage): Promise<OmniMessage> {
+    const platform = String(msg.payload.platform ?? "");
+    const cookiesJson = String(msg.payload.cookies_json ?? "").trim();
+    if (!SUPPORTED_PLATFORMS.includes(platform) || !cookiesJson) {
+      return error(msg.request_id, "AUTH_002", "AUTH_002: invalid platform or empty cookies_json");
+    }
+    try {
+      const parsed = parseStoredCookies(cookiesJson, platform);
+      if (parsed.length === 0) {
+        return error(msg.request_id, "AUTH_002", "AUTH_002: no valid cookies found (need name/value pairs)");
+      }
+      new CookieCipher(this.opts.dataDir).encryptCookie(platform, cookiesJson);
+      const accounts = new AccountRepository(this.db);
+      accounts.getOrCreate(platform);
+      accounts.setStatus(platform, "active");
+      return complete(msg.request_id, { task: "cookie_import", platform, cookie_count: parsed.length });
+    } catch (err) {
+      return error(msg.request_id, "AUTH_002", `AUTH_002: ${(err as Error).message}`);
+    }
+  }
+
+  /** 查询平台 Cookie 状态（仅返回是否存在/数量/有效性，不返回明文）。 */
+  async cookieStatus(msg: OmniMessage): Promise<OmniMessage> {
+    const platform = String(msg.payload.platform ?? "");
+    if (!SUPPORTED_PLATFORMS.includes(platform)) {
+      return error(msg.request_id, "AUTH_003", "AUTH_003: invalid platform");
+    }
+    try {
+      const plain = new CookieCipher(this.opts.dataDir).decryptCookie(platform);
+      let cookieCount = 0;
+      let valid = false;
+      if (plain) {
+        const parsed = parseStoredCookies(plain, platform);
+        cookieCount = parsed.length;
+        valid = cookieCount > 0;
+      }
+      const account = this.db
+        .prepare("SELECT status, error_reason FROM platform_accounts WHERE platform = ?")
+        .get(platform) as { status: string; error_reason: string | null } | undefined;
+      return complete(msg.request_id, {
+        task: "cookie_status",
+        platform,
+        has_cookie: plain !== null,
+        cookie_count: cookieCount,
+        valid,
+        account_status: account?.status ?? "inactive",
+        account_error_reason: account?.error_reason ?? null,
+      });
+    } catch (err) {
+      return error(msg.request_id, "AUTH_003", `AUTH_003: ${(err as Error).message}`);
     }
   }
 
