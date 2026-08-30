@@ -150,46 +150,95 @@ export class MarkdownBuilder {
   /** Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。 */
   buildTopicHub(topicName: string, noteLinks: string[]): string {
     const name = (topicName || "未命名主题").trim();
-    const links = [...new Set(noteLinks.filter(Boolean))]
-      .map((l) => `- [[${l.replace(/\.md$/i, "")}]]`)
-      .join("\n");
-    return [
-      "---",
-      `topic: ${yamlString(name)}`,
-      `tags: ["topic/${sanitizeFilename(name)}"]`,
-      "---",
-      "",
-      `# ${name}`,
-      "",
-      "> 主题聚合页（Omni Collector 自动生成，修改会被覆盖）",
-      "",
-      "## 收藏",
-      "",
-      links,
-      "",
-    ].join("\n");
+    return this.buildHub(name, noteLinks, {
+      frontmatterKey: "topic",
+      tags: [JSON.stringify(`topic/${sanitizeFilename(name)}`)],
+      dataviewField: "topics",
+    });
   }
 
   /** Tag 聚合页（PRD 16 / 关系图谱联动）：主 Tag 节点 + 成员笔记 wikilink。 */
   buildTagHub(tagName: string, noteLinks: string[]): string {
     const name = (tagName || "未命名标签").trim();
+    return this.buildHub(name, noteLinks, {
+      frontmatterKey: "tag",
+      tags: [JSON.stringify(sanitizeFilename(name))],
+      dataviewField: "tags",
+    });
+  }
+
+  /**
+   * 聚合页统一构造（PRD 17/16）：与收藏笔记相同的区域隔离协议——
+   * 系统区（成员 wikilink + Dataview 动态索引）自动维护；「我的整理」起为用户区，自动化禁止触碰。
+   * frontmatter 的 aliases 供用户自定义别名（图谱/解析原生生效）。
+   */
+  private buildHub(
+    name: string,
+    noteLinks: string[],
+    cfg: { frontmatterKey: "topic" | "tag"; tags: string[]; dataviewField: "topics" | "tags" },
+  ): string {
+    return [
+      "---",
+      `${cfg.frontmatterKey}: ${yamlString(name)}`,
+      `tags: [${cfg.tags.join(", ")}]`,
+      "aliases: []",
+      "---",
+      "",
+      `# ${escapeTitleHash(name)}`,
+      "",
+      `> 聚合页说明：系统区（标记注释之间）由 Omni Collector 自动维护；「## 我的整理」及之后为用户区，任何自动化逻辑禁止修改。`,
+      "",
+      SYSTEM_START,
+      this.buildHubSystemZone(name, noteLinks, cfg.dataviewField),
+      SYSTEM_END,
+      "",
+      "## 我的整理",
+      "",
+    ].join("\n");
+  }
+
+  /** 聚合页系统区：成员 wikilink（图谱边）+ Dataview 动态索引（按 frontmatter 元数据实时查询）。 */
+  private buildHubSystemZone(name: string, noteLinks: string[], dataviewField: "topics" | "tags"): string {
     const links = [...new Set(noteLinks.filter(Boolean))]
       .map((l) => `- [[${l.replace(/\.md$/i, "")}]]`)
       .join("\n");
+    const safeName = name.replace(/"/g, "'");
     return [
-      "---",
-      `tags: ["${sanitizeFilename(name)}"]`,
-      "---",
-      "",
-      `# ${name}`,
-      "",
-      "> 标签聚合页（Omni Collector 自动生成，修改会被覆盖）",
-      "",
       "## 收藏",
       "",
-      links,
+      links || "（暂无成员）",
+      "",
+      "## 动态索引",
+      "",
+      "```dataview",
+      "TABLE priority AS 优先级, organize_status AS 整理状态, collected_at AS 收藏日期",
+      'FROM "Omni Collector"',
+      `WHERE contains(${dataviewField}, "${safeName}")`,
+      "SORT collected_at DESC",
+      "```",
       "",
     ].join("\n");
+  }
+
+  /**
+   * 更新聚合页系统区（成员/标题变化时）：只替换标记内内容并镜像 H1，
+   * frontmatter（含用户 aliases）与「我的整理」用户区原样保留。
+   * 返回 null 表示文件缺少系统区标记（旧格式，由调用方决定升级策略）。
+   */
+  replaceHubSystemZone(
+    md: string,
+    hubTitle: string,
+    noteLinks: string[],
+    dataviewField: "topics" | "tags",
+  ): string | null {
+    if (!this.validateMarkers(md)) return null;
+    const start = md.indexOf(SYSTEM_START);
+    const end = md.indexOf(SYSTEM_END) + SYSTEM_END.length;
+    const head = md.slice(0, start);
+    const tail = md.slice(end);
+    const system = `${SYSTEM_START}\n${this.buildHubSystemZone(hubTitle, noteLinks, dataviewField)}${SYSTEM_END}`;
+    const updatedHead = head.replace(/^# .*$/m, `# ${escapeTitleHash(hubTitle)}`);
+    return `${updatedHead}${system}${tail}`;
   }
 
   /**

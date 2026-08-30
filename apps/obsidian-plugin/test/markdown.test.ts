@@ -115,6 +115,34 @@ describe("MarkdownBuilder", () => {
     expect(hub).toContain("[[Omni Collector/bilibili/桌搭视频]]");
   });
 
+  it("topic hub uses zone isolation: system zone + user zone + aliases + dataview", () => {
+    const builder = new MarkdownBuilder();
+    const hub = builder.buildTopicHub("桌搭设计", ["Omni Collector/bilibili/桌搭视频"]);
+    expect(builder.validateMarkers(hub)).toBe(true);
+    expect(hub).toContain("## 我的整理");
+    expect(hub).toContain("aliases: []");
+    expect(hub).toContain("```dataview");
+    expect(hub).toContain('WHERE contains(topics, "桌搭设计")');
+  });
+
+  it("replaceHubSystemZone keeps user zone and frontmatter, refreshes links and H1", () => {
+    const builder = new MarkdownBuilder();
+    const hub = builder.buildTopicHub("旧主题", ["Omni Collector/bilibili/旧视频"]);
+    const userEdit = hub.replace("## 我的整理", "## 我的整理\n\n我自己的整理思路，不能被覆盖");
+    const next = builder.replaceHubSystemZone(
+      userEdit,
+      "新主题",
+      ["Omni Collector/bilibili/新视频"],
+      "topics",
+    )!;
+    expect(next).not.toBeNull();
+    expect(next).toContain("[[Omni Collector/bilibili/新视频]]");
+    expect(next).not.toContain("旧视频");
+    expect(next).toContain("# 新主题");
+    expect(next).toContain("我自己的整理思路，不能被覆盖");
+    expect(next).toContain("aliases: []");
+  });
+
   it("collection notes link to both tag and topic hub nodes (graph double-link)", () => {
     const md = new MarkdownBuilder().buildFromDTO({
       ...dto,
@@ -131,5 +159,6 @@ describe("MarkdownBuilder", () => {
     ]);
     expect(hub).toContain("# 生活美学");
     expect(hub).toContain("[[Omni Collector/xiaohongshu/桌搭推荐]]");
+    expect(hub).toContain('WHERE contains(tags, "生活美学")');
   });
 });

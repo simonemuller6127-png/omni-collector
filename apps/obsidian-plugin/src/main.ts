@@ -116,9 +116,17 @@ export default class OmniCollectorPlugin extends Plugin {
         listTags: () => this.engine.listTags(),
         addAlias: (tag, alias) => this.engine.addTagAlias(tag, alias).then(() => undefined),
         mergeTags: (sourceTag, target) => this.engine.mergeTags(sourceTag, target).then(() => undefined),
-        renameTag: (tag, next) => this.engine.renameTag(tag, next).then(() => undefined),
+        renameTag: async (tag, next) => {
+          await this.engine.renameTag(tag, next);
+          await this.renameHubFile("Tags", tag, next);
+        },
         listTopics: () => this.engine.listTopics(),
-        renameTopic: (id, name) => this.engine.renameTopic(id, name).then(() => undefined),
+        renameTopic: async (id, name) => {
+          const topics = await this.engine.listTopics().catch(() => []);
+          const old = topics.find((t) => t.id === id)?.name ?? "";
+          await this.engine.renameTopic(id, name);
+          if (old && old !== name) await this.renameHubFile("Topics", old, name);
+        },
         listCollections: () => this.engine.listCollections(),
         openDetail: (id) => this.openCollectionDetail(id),
         refreshMarkdown: () => this.generateCollectionMarkdown(),
@@ -510,11 +518,16 @@ export default class OmniCollectorPlugin extends Plugin {
           .filter(Boolean);
         const hubPath = `${topicDir}/${sanitizeFilename(topic.name)}.md`;
         try {
-          const content = builder.buildTopicHub(topic.name, links);
+          const fresh = builder.buildTopicHub(topic.name, links);
           if (await vault.adapter.exists(hubPath)) {
-            await vault.adapter.write(hubPath, content);
+            const existing = await vault.adapter.read(hubPath);
+            // 新格式：仅替换系统区（用户区/frontmatter aliases 保留）；旧格式一次性升级
+            const next = builder.validateMarkers(existing)
+              ? (builder.replaceHubSystemZone(existing, topic.name, links, "topics") ?? fresh)
+              : fresh;
+            await vault.adapter.write(hubPath, next);
           } else {
-            await vault.create(hubPath, content);
+            await vault.create(hubPath, fresh);
           }
         } catch {
           // 单个 Topic 页失败不中断
@@ -534,11 +547,15 @@ export default class OmniCollectorPlugin extends Plugin {
           .map((c) => `Omni Collector/${c.platform}/${sanitizeFilename(c.title || c.platformItemId)}`);
         const hubPath = `${tagDir}/${sanitizeFilename(tag.name)}.md`;
         try {
-          const content = builder.buildTagHub(tag.name, links);
+          const fresh = builder.buildTagHub(tag.name, links);
           if (await vault.adapter.exists(hubPath)) {
-            await vault.adapter.write(hubPath, content);
+            const existing = await vault.adapter.read(hubPath);
+            const next = builder.validateMarkers(existing)
+              ? (builder.replaceHubSystemZone(existing, tag.name, links, "tags") ?? fresh)
+              : fresh;
+            await vault.adapter.write(hubPath, next);
           } else {
-            await vault.create(hubPath, content);
+            await vault.create(hubPath, fresh);
           }
         } catch {
           // 单个 Tag 页失败不中断
@@ -569,6 +586,15 @@ export default class OmniCollectorPlugin extends Plugin {
     } catch {
       // 用户区物化失败不阻断操作（SQLite 同步副本已写入）
     }
+  }
+
+  /** 聚合页重命名跟随：vault.rename 自动更新全库 wikilink（图谱边不断），H1 由下次生成镜像。 */
+  private async renameHubFile(dir: "Tags" | "Topics", oldName: string, newName: string): Promise<void> {
+    const oldPath = `Omni Collector/${dir}/${sanitizeFilename(oldName)}.md`;
+    const newPath = `Omni Collector/${dir}/${sanitizeFilename(newName)}.md`;
+    if (oldPath === newPath) return;
+    const file = this.app.vault.getAbstractFileByPath(oldPath);
+    if (file) await this.app.vault.rename(file as import("obsidian").TFile, newPath);
   }
 
   private async openCollectionList(platform?: string): Promise<void> {
