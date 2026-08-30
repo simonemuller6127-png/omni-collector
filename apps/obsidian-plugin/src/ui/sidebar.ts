@@ -20,6 +20,8 @@ export interface OmniController {
   generateMarkdown(): Promise<void>;
   runGroupRecognition(): Promise<void>;
   scanLocalFiles(): Promise<void>;
+  /** 今日回顾（借鉴 Readwise Daily Review）：随机重现一条最旧的未整理收藏。 */
+  dailyReview(): Promise<void>;
 }
 
 const PLATFORMS: Array<{ key: string; label: string }> = [
@@ -126,6 +128,7 @@ export class OmniSidebarView extends ItemView {
     container.createEl("div", { text: "内容", cls: "omni-section-title" });
     const contentRow = container.createEl("div", { cls: "omni-btn-grid" });
     this.addActionButton(contentRow, "收藏列表", () => this.ctrl.openCollectionList());
+    this.addActionButton(contentRow, "今日回顾", () => this.withBusy(async () => { await this.ctrl.dailyReview(); }));
     this.addActionButton(contentRow, "生成 Markdown", () => this.withBusy(async () => { await this.ctrl.generateMarkdown(); }));
     this.addActionButton(contentRow, "分组识别", () => this.withBusy(async () => { await this.ctrl.runGroupRecognition(); }));
     this.addActionButton(contentRow, "AI 建议审核", () => this.ctrl.openAiReview());

@@ -4536,6 +4536,16 @@ var EngineClient = class {
       payload: { source_id: sourceId, target_id: targetId }
     });
   }
+  /** 分组/系列列表（受控词表与分组管理用）。 */
+  async listGroups() {
+    const res = await this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "STATUS_QUERY",
+      payload: { scope: "groups" }
+    });
+    return res.payload?.groups ?? [];
+  }
   /** 查询收藏列表（DTO）。 */
   async listCollections() {
     const res = await this.request({
@@ -4904,6 +4914,9 @@ var OmniSidebarView = class extends import_obsidian3.ItemView {
     container.createEl("div", { text: "\u5185\u5BB9", cls: "omni-section-title" });
     const contentRow = container.createEl("div", { cls: "omni-btn-grid" });
     this.addActionButton(contentRow, "\u6536\u85CF\u5217\u8868", () => this.ctrl.openCollectionList());
+    this.addActionButton(contentRow, "\u4ECA\u65E5\u56DE\u987E", () => this.withBusy(async () => {
+      await this.ctrl.dailyReview();
+    }));
     this.addActionButton(contentRow, "\u751F\u6210 Markdown", () => this.withBusy(async () => {
       await this.ctrl.generateMarkdown();
     }));
@@ -5349,8 +5362,22 @@ var OmniTagTopicView = class extends import_obsidian5.ItemView {
 var import_obsidian6 = require("obsidian");
 
 // src/ui/helpers.ts
+function haystackOf(c) {
+  return [c.title, c.author, c.description, c.url, c.groupName, ...c.tags ?? [], ...c.topics ?? []].filter(Boolean).join("\n").toLowerCase();
+}
 function filterCollections(items, filter) {
-  return items.filter((c) => filter.status ? c.organizeStatus === filter.status : true).filter((c) => filter.priority ? c.priority === filter.priority : true).sort((a, b) => b.collectedAt.localeCompare(a.collectedAt));
+  const keyword = filter.keyword?.trim().toLowerCase();
+  return items.filter((c) => filter.status ? c.organizeStatus === filter.status : true).filter((c) => filter.priority ? c.priority === filter.priority : true).filter((c) => keyword ? haystackOf(c).includes(keyword) : true).sort((a, b) => b.collectedAt.localeCompare(a.collectedAt));
+}
+function pickDailyReview(items, random = Math.random) {
+  const pool = items.filter(
+    (c) => c.contentStatus === "active" && c.organizeStatus !== "archived"
+  );
+  if (pool.length === 0) return null;
+  const unorganized = pool.filter((c) => c.organizeStatus === "unorganized").sort((a, b) => a.collectedAt.localeCompare(b.collectedAt));
+  const base = unorganized.length > 0 ? unorganized : pool;
+  const candidates = base.slice(0, Math.min(20, base.length));
+  return candidates[Math.floor(random() * candidates.length)] ?? null;
 }
 function nextOrganizeState(state) {
   switch (state) {
@@ -5428,6 +5455,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     __publicField(this, "saveTypeFilter", "all");
     __publicField(this, "priorityFilter", "all");
     __publicField(this, "platformFilter", null);
+    __publicField(this, "searchQuery", "");
     __publicField(this, "sortByRating", false);
     __publicField(this, "mode", "collections");
     __publicField(this, "viewMode", "list");
@@ -5541,6 +5569,17 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
         this.renderToolbar();
         void this.renderList();
       });
+      tb.createEl("span", { text: "\uFF5C", cls: "omni-toolbar-sep" });
+      const search = tb.createEl("input", {
+        type: "text",
+        placeholder: "\u641C\u7D22 \u6807\u9898/\u4F5C\u8005/\u7B80\u4ECB/Tag/Topic\u2026",
+        cls: "omni-search-input",
+        attr: { value: this.searchQuery }
+      });
+      search.addEventListener("input", () => {
+        this.searchQuery = search.value;
+        void this.renderList();
+      });
     }
     tb.createEl("button", { text: "\u5237\u65B0", cls: "omni-chip omni-chip-refresh" }).addEventListener("click", () => {
       void this.refreshList();
@@ -5596,6 +5635,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     else if (this.statusFilter === "organized") filter.status = "organized";
     else if (this.statusFilter === "archived") filter.status = "archived";
     if (this.priorityFilter !== "all") filter.priority = this.priorityFilter;
+    if (this.searchQuery.trim()) filter.keyword = this.searchQuery;
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== "all") items = items.filter((i) => i.saveType === this.saveTypeFilter);
@@ -5743,6 +5783,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     else if (this.statusFilter === "organized") filter.status = "organized";
     else if (this.statusFilter === "archived") filter.status = "archived";
     if (this.priorityFilter !== "all") filter.priority = this.priorityFilter;
+    if (this.searchQuery.trim()) filter.keyword = this.searchQuery;
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== "all") items = items.filter((i) => i.saveType === this.saveTypeFilter);
@@ -5766,6 +5807,14 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
       this.selected.clear();
       this.renderBatchBar();
       void this.renderList();
+    });
+    bar.createEl("button", { text: "\u590D\u5236\u94FE\u63A5", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+      const urls = this.items.filter((i) => this.selected.has(i.id)).map((i) => i.url);
+      if (urls.length === 0) {
+        new import_obsidian6.Notice("\u8BF7\u5148\u52FE\u9009\u6536\u85CF");
+        return;
+      }
+      void navigator.clipboard.writeText(urls.join("\n")).then(() => new import_obsidian6.Notice(`\u5DF2\u590D\u5236 ${urls.length} \u6761\u94FE\u63A5`)).catch((e) => new import_obsidian6.Notice(`\u590D\u5236\u5931\u8D25\uFF1A${e.message}`));
     });
     bar.createEl("button", { text: "\u6279\u91CF Tag", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("tag"));
     bar.createEl("button", { text: "\u6279\u91CF Topic", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("topic"));
@@ -5804,7 +5853,17 @@ var import_obsidian8 = require("obsidian");
 
 // src/ui/manual-ai.ts
 var import_obsidian7 = require("obsidian");
-function buildManualTemplate(item) {
+
+// src/ui/manual-template.ts
+function vocabLines(vocabulary) {
+  if (!vocabulary) return [];
+  const lines = ["Tag/Topic/\u5206\u7EC4\u5EFA\u8BAE\u8BF7\u4F18\u5148\u4ECE\u4E0B\u9762\u53D7\u63A7\u8BCD\u8868\u4E2D\u9009\u7528\uFF1B\u786E\u65E0\u5408\u9002\u518D\u65B0\u9020\u3002"];
+  if ((vocabulary.tags ?? []).length > 0) lines.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 Tag\uFF1A${vocabulary.tags.join(", ")}`);
+  if ((vocabulary.topics ?? []).length > 0) lines.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 Topic\uFF1A${vocabulary.topics.join(", ")}`);
+  if ((vocabulary.groups ?? []).length > 0) lines.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 \u5206\u7EC4\uFF1A${vocabulary.groups.join(", ")}`);
+  return lines.length > 1 ? ["", ...lines] : [];
+}
+function buildManualTemplate(item, vocabulary) {
   return [
     "\u4F60\u662F\u6536\u85CF\u6574\u7406\u52A9\u624B\u3002\u6839\u636E\u4E0B\u9762\u7684\u6536\u85CF\u5185\u5BB9\uFF0C\u8F93\u51FA JSON \u6570\u7EC4\uFF0C\u5143\u7D20\u7ED3\u6784\uFF1A",
     '{"type":"suggested_tag|suggested_topic|suggested_summary|suggested_group","payload":"...","confidence":0-1}\u3002',
@@ -5812,6 +5871,7 @@ function buildManualTemplate(item) {
     "suggested_summary \u4E3A 1-2 \u53E5\u6458\u8981\u5B57\u7B26\u4E32\uFF1Bsuggested_group \u4E3A\u6536\u85CF\u5206\u7EC4\u540D\u3002\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981\u989D\u5916\u89E3\u91CA\u3002",
     "",
     `\u5DF2\u6709Tag\uFF1A${(item.tags ?? []).length > 0 ? (item.tags ?? []).join(", ") : "\u65E0"}`,
+    ...vocabLines(vocabulary),
     "--- \u6536\u85CF\u5185\u5BB9 ---",
     `\u5E73\u53F0\uFF1A${item.platform}`,
     `\u6807\u9898\uFF1A${item.title}`,
@@ -5820,14 +5880,42 @@ function buildManualTemplate(item) {
     item.description ? `\u7B80\u4ECB\uFF1A${item.description.slice(0, 500)}` : ""
   ].filter((line) => line !== "").join("\n");
 }
-function openManualAIModal(app, item, source) {
+function buildManualBatchTemplate(items, vocabulary) {
+  const list = items.map(
+    (item, i) => `${i}. \u6807\u9898\uFF1A${item.title}
+   \u5E73\u53F0\uFF1A${item.platform}
+   \u94FE\u63A5\uFF1A${item.url}
+` + (item.description ? `   \u7B80\u4ECB\uFF1A${item.description.slice(0, 300)}
+` : "")
+  ).join("\n");
+  const vocab = [];
+  if (vocabulary) {
+    if ((vocabulary.tags ?? []).length > 0) vocab.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 Tag\uFF1A${vocabulary.tags.join(", ")}`);
+    if ((vocabulary.topics ?? []).length > 0) vocab.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 Topic\uFF1A${vocabulary.topics.join(", ")}`);
+    if ((vocabulary.groups ?? []).length > 0) vocab.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 \u5206\u7EC4\uFF1A${vocabulary.groups.join(", ")}`);
+  }
+  return [
+    "\u4F60\u662F\u6536\u85CF\u6574\u7406\u52A9\u624B\u3002\u4E0B\u9762\u6709 " + items.length + " \u6761\u6536\u85CF\uFF0C\u8BF7\u9010\u6761\u8F93\u51FA JSON \u6570\u7EC4\uFF0C\u5143\u7D20\u7ED3\u6784\uFF1A",
+    '[{"index":0,"suggestions":[{"type":"suggested_tag|suggested_topic|suggested_summary|suggested_group","payload":"...","confidence":0-1}]}]',
+    "index \u5FC5\u987B\u4E0E\u6536\u85CF\u7F16\u53F7\u4E00\u4E00\u5BF9\u5E94\uFF080 \u5F00\u59CB\uFF09\uFF1Bsuggested_tag \u7684 payload \u4E3A\u5B57\u7B26\u4E32\u6570\u7EC4 JSON\uFF1B",
+    "suggested_topic \u4E3A\u5355\u4E2A\u4E3B\u9898\u5B57\u7B26\u4E32\uFF1Bsuggested_summary \u4E3A 1-2 \u53E5\u6458\u8981\uFF1B",
+    "suggested_group \u4E3A\u6536\u85CF\u5206\u7EC4\u540D\u3002\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981\u989D\u5916\u89E3\u91CA\u3002",
+    ...vocab.length > 0 ? ["", "Tag/Topic/\u5206\u7EC4\u5EFA\u8BAE\u8BF7\u4F18\u5148\u4ECE\u53D7\u63A7\u8BCD\u8868\u4E2D\u9009\u7528\uFF1B\u786E\u65E0\u5408\u9002\u518D\u65B0\u9020\u3002", ...vocab] : [],
+    "",
+    "--- \u6536\u85CF\u5217\u8868 ---",
+    list
+  ].join("\n");
+}
+
+// src/ui/manual-ai.ts
+function openManualAIModal(app, item, source, vocabulary) {
   const modal = new import_obsidian7.Modal(app);
   modal.titleEl.setText("Manual \u6A21\u5F0F AI\uFF08PRD 19.3\uFF09");
   modal.contentEl.createEl("h4", { text: "1) \u590D\u5236\u6A21\u677F\u5230\u4EFB\u610F AI \u5DE5\u5177\uFF08ChatGPT/DeepSeek \u7B49\uFF09" });
   const tpl = modal.contentEl.createEl("textarea", {
     attr: { rows: "12", style: "width:100%;" }
   });
-  tpl.value = buildManualTemplate(item);
+  tpl.value = buildManualTemplate(item, vocabulary);
   modal.contentEl.createEl("button", { text: "\u590D\u5236\u6A21\u677F", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
     tpl.select();
     document.execCommand("copy");
@@ -6218,10 +6306,16 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
     const topicBtn = chips.createEl("button", { text: "\uFF0BTopic", cls: "omni-chip" });
     topicBtn.addEventListener("click", () => this.promptText("\u5F52\u5165 Topic", "\u8F93\u5165 Topic \u540D", (v) => this.source.onTopic(item.id, v)));
     const manualBtn = chips.createEl("button", { text: "Manual AI", cls: "omni-chip" });
-    manualBtn.addEventListener(
-      "click",
-      () => openManualAIModal(this.app, item, { submit: (id, reply) => this.source.submitManualAI(id, reply) })
-    );
+    manualBtn.addEventListener("click", () => {
+      void this.source.getVocabulary().catch(() => void 0).then(
+        (vocabulary) => openManualAIModal(
+          this.app,
+          item,
+          { submit: (id, reply) => this.source.submitManualAI(id, reply) },
+          vocabulary
+        )
+      );
+    });
     if ((item.comments ?? []).length > 0) {
       container.createEl("div", { text: "\u8BC4\u8BBA", cls: "omni-section-title" });
       const comments = container.createEl("div", { cls: "omni-detail-comments" });
@@ -6370,33 +6464,14 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
 
 // src/ui/manual-ai-batch.ts
 var import_obsidian9 = require("obsidian");
-function buildManualBatchTemplate(items) {
-  const list = items.map(
-    (item, i) => `${i}. \u6807\u9898\uFF1A${item.title}
-   \u5E73\u53F0\uFF1A${item.platform}
-   \u94FE\u63A5\uFF1A${item.url}
-` + (item.description ? `   \u7B80\u4ECB\uFF1A${item.description.slice(0, 300)}
-` : "")
-  ).join("\n");
-  return [
-    "\u4F60\u662F\u6536\u85CF\u6574\u7406\u52A9\u624B\u3002\u4E0B\u9762\u6709 " + items.length + " \u6761\u6536\u85CF\uFF0C\u8BF7\u9010\u6761\u8F93\u51FA JSON \u6570\u7EC4\uFF0C\u5143\u7D20\u7ED3\u6784\uFF1A",
-    '[{"index":0,"suggestions":[{"type":"suggested_tag|suggested_topic|suggested_summary|suggested_group","payload":"...","confidence":0-1}]}]',
-    "index \u5FC5\u987B\u4E0E\u6536\u85CF\u7F16\u53F7\u4E00\u4E00\u5BF9\u5E94\uFF080 \u5F00\u59CB\uFF09\uFF1Bsuggested_tag \u7684 payload \u4E3A\u5B57\u7B26\u4E32\u6570\u7EC4 JSON\uFF1B",
-    "suggested_topic \u4E3A\u5355\u4E2A\u4E3B\u9898\u5B57\u7B26\u4E32\uFF1Bsuggested_summary \u4E3A 1-2 \u53E5\u6458\u8981\uFF1B",
-    "suggested_group \u4E3A\u6536\u85CF\u5206\u7EC4\u540D\u3002\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981\u989D\u5916\u89E3\u91CA\u3002",
-    "",
-    "--- \u6536\u85CF\u5217\u8868 ---",
-    list
-  ].join("\n");
-}
-function openManualAIBatchModal(app, items, source) {
+function openManualAIBatchModal(app, items, source, vocabulary) {
   const modal = new import_obsidian9.Modal(app);
   modal.titleEl.setText(`Manual AI \u6279\u91CF\uFF08${items.length} \u6761\uFF09`);
   modal.contentEl.createEl("h4", { text: "1) \u590D\u5236\u6A21\u677F\u5230\u4EFB\u610F AI \u5DE5\u5177\uFF08\u4E00\u6B21\u5904\u7406\u5168\u90E8\u6536\u85CF\uFF09" });
   const tpl = modal.contentEl.createEl("textarea", {
     attr: { rows: "16", style: "width:100%;" }
   });
-  tpl.value = buildManualBatchTemplate(items);
+  tpl.value = buildManualBatchTemplate(items, vocabulary);
   modal.contentEl.createEl("button", { text: "\u590D\u5236\u6A21\u677F", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
     tpl.select();
     document.execCommand("copy");
@@ -6523,7 +6598,8 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
           if (file) void this.app.workspace.getLeaf(false).openFile(file);
         },
         ensureCover: (url) => this.ensureCover(url),
-        submitManualAI: (id, reply) => this.engine.submitManualAI(id, reply).then(() => void 0)
+        submitManualAI: (id, reply) => this.engine.submitManualAI(id, reply).then(() => void 0),
+        getVocabulary: () => this.tagVocabulary()
       };
       return new OmniCollectionDetailView(leaf, source);
     });
@@ -6626,6 +6702,13 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
       name: "\u6253\u5F00\u6536\u85CF\u5217\u8868",
       callback: () => {
         void this.openCollectionList();
+      }
+    });
+    this.addCommand({
+      id: "daily-review",
+      name: "\u4ECA\u65E5\u56DE\u987E\uFF08\u91CD\u73B0\u4E00\u6761\u6700\u65E7\u7684\u672A\u6574\u7406\u6536\u85CF\uFF09",
+      callback: () => {
+        void this.controller.dailyReview();
       }
     });
     this.addCommand({
@@ -6773,7 +6856,17 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         const candidates = res.payload?.candidates ?? [];
         new import_obsidian10.Notice(`\u5206\u7EC4\u8BC6\u522B\u5B8C\u6210\uFF1A\u53D1\u73B0 ${candidates.length} \u4E2A\u5019\u9009\uFF08\u8BF7\u5230 AI \u5EFA\u8BAE\u5BA1\u6838\u786E\u8BA4\uFF09`);
       },
-      scanLocalFiles: () => this.scanLocalFiles()
+      scanLocalFiles: () => this.scanLocalFiles(),
+      dailyReview: async () => {
+        const items = await this.engine.listCollections().catch(() => []);
+        const pick = pickDailyReview(items);
+        if (!pick) {
+          new import_obsidian10.Notice("\u4ECA\u65E5\u56DE\u987E\uFF1A\u6682\u65E0\u53EF\u56DE\u987E\u7684\u6536\u85CF\uFF08\u5148\u53BB\u540C\u6B65\u5427\uFF09");
+          return;
+        }
+        new import_obsidian10.Notice(`\u4ECA\u65E5\u56DE\u987E\uFF1A${pick.title || pick.platformItemId}`);
+        await this.openCollectionDetail(pick.id);
+      }
     };
   }
   updateEngineNodeBin() {
@@ -7029,9 +7122,23 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
     }
     if (leaf) workspace.setActiveLeaf(leaf);
   }
+  /** 受控词表（借鉴 Cubox）：Tag/Topic/分组 TopN，供 Manual AI 模板对齐用户已有命名。 */
+  async tagVocabulary() {
+    const [tags, topics, groups] = await Promise.all([
+      this.engine.listTags().catch(() => []),
+      this.engine.listTopics().catch(() => []),
+      this.engine.listGroups().catch(() => [])
+    ]);
+    return {
+      tags: [...tags].sort((a, b) => b.count - a.count).slice(0, 30).map((t) => t.name),
+      topics: topics.filter((t) => t.status === "accepted" || (t.collection_ids ?? []).length > 0).slice(0, 30).map((t) => t.name),
+      groups: groups.slice(0, 30).map((g) => g.name)
+    };
+  }
   /** Manual AI 全局入口：先选收藏，再打开模板（PRD 19.3）。 */
   async openManualAIPicker() {
     const collections = await this.engine.listCollections().catch(() => []);
+    const vocabulary = await this.tagVocabulary().catch(() => void 0);
     const modal = new import_obsidian10.Modal(this.app);
     modal.titleEl.setText("\u9009\u62E9\u6536\u85CF\uFF08Manual AI \u6A21\u677F\uFF09");
     const search = modal.contentEl.createEl("input", {
@@ -7051,9 +7158,12 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         row.createEl("span", { text: c.title || c.id, cls: "omni-title" });
         row.addEventListener("click", () => {
           modal.close();
-          openManualAIModal(this.app, c, {
-            submit: (id, reply) => this.engine.submitManualAI(id, reply).then(() => void 0)
-          });
+          openManualAIModal(
+            this.app,
+            c,
+            { submit: (id, reply) => this.engine.submitManualAI(id, reply).then(() => void 0) },
+            vocabulary
+          );
         });
       }
       if (filtered.length === 0) {
@@ -7067,6 +7177,7 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
   /** Manual AI 批量入口：按平台/时间段打包 N 条收藏，一次交给网页 AI。 */
   async openManualAIBatchPicker() {
     const collections = await this.engine.listCollections().catch(() => []);
+    const vocabulary = await this.tagVocabulary().catch(() => void 0);
     const modal = new import_obsidian10.Modal(this.app);
     modal.titleEl.setText("Manual AI \u6279\u91CF\u6253\u5305");
     const filters = modal.contentEl.createEl("div", { cls: "omni-batch-filter" });
@@ -7117,9 +7228,14 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         return;
       }
       modal.close();
-      openManualAIBatchModal(this.app, items, {
-        submit: (ids, reply) => this.engine.submitManualAIBatch(ids, reply).then((res) => Number(res.payload?.saved ?? 0))
-      });
+      openManualAIBatchModal(
+        this.app,
+        items,
+        {
+          submit: (ids, reply) => this.engine.submitManualAIBatch(ids, reply).then((res) => Number(res.payload?.saved ?? 0))
+        },
+        vocabulary
+      );
     });
     refresh();
     modal.open();

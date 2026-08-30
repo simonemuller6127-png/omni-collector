@@ -30,7 +30,7 @@ Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and l
 
 ### 本地知识管理
 
-- 收藏列表：纯文字 / 卡片缩略图双视图，平台 / 类型 / 状态 / 优先级过滤
+- 收藏列表：纯文字 / 卡片缩略图双视图，平台 / 类型 / 状态 / 优先级过滤，关键字检索（标题/作者/简介/Tag/Topic/分组），批量复制所选链接
 - 内容预览：B站 / YouTube 官方嵌入播放器、正文按需抓取（不落盘）、评论展示
 - 整理工作流：未整理 → 已查看 → 已整理 → 已归档；优先级（普通/重要/项目/知识）
 - 手动评分 1~5 星（PRD 29.2）与精选评论（PRD 7.3）：操作物化进 Markdown 用户区，SQLite 同步副本，列表支持按评分排序
@@ -42,6 +42,7 @@ Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and l
 - Topic 手动合并：Tag/Topic 管理页一键把源 Topic 并入目标，成员自动迁移
 - Related Collections：同 ContentGroup / 同实体 / 本地语义相似（TF-IDF，规则 `semantic_related_enabled` 可选开启，纯本地无 API）
 - 超期提醒：侧边栏提示超期未整理（默认 14 天）与稍后再看超期（默认 30 天），天数由规则中心配置
+- 今日回顾（借鉴 Readwise Daily Review）：一键随机重现一条最旧的未整理收藏，让沉睡内容重新浮出
 - 本地文件：多目录扫描（.md / .pdf），按系统区 URL 自动关联收藏；自动 / 手动扫描
 - 文件丢失软警告默认开启；规则中心开启 `file_hash_tracking` 后按 SHA-256 自动恢复移动过的文件关联（PRD 9.7）
 - 规则中心开启 `file_enhanced_analysis` 后，Markdown 扫描额外提取章节标题与 TOC 结构（PRD 9.4，不落盘正文）
@@ -53,6 +54,7 @@ Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and l
 - Suggestion 审核机制：AI 只生成建议，用户确认后才写入
 - 功能级开关：Tag / Topic / 摘要可分别启用，每日调用上限（默认 50）
 - **Manual 模式（PRD 19.3）**：复制提示词模板到任意 AI 工具，粘贴回复自动解析为建议；支持批量打包 N 条收藏一次处理
+- Manual 模板内置**受控词表**（TopN Tag/Topic/分组），AI 建议自动贴合你的命名体系
 - Provider：DeepSeek / OpenAI（OpenAI 兼容接口）
 
 ### 同步计划与规则中心

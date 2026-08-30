@@ -88,6 +88,7 @@ export class OmniCollectionListView extends ItemView {
   private saveTypeFilter: "all" | "favorited" | "watch_later" | "liked" = "all";
   private priorityFilter: "all" | CollectionDTO["priority"] = "all";
   private platformFilter: string | null = null;
+  private searchQuery = "";
   private sortByRating = false;
   private mode: "collections" | "local" = "collections";
   private viewMode: "list" | "card" = "list";
@@ -181,6 +182,14 @@ export class OmniCollectionListView extends ItemView {
       tb.createEl('span', { text: '｜', cls: 'omni-toolbar-sep' });
       tb.createEl('button', { text: '按评分排序', cls: `omni-chip${this.sortByRating ? ' omni-chip-active' : ''}` })
         .addEventListener('click', () => { this.sortByRating = !this.sortByRating; this.renderToolbar(); void this.renderList(); });
+      tb.createEl('span', { text: '｜', cls: 'omni-toolbar-sep' });
+      const search = tb.createEl('input', {
+        type: 'text',
+        placeholder: '搜索 标题/作者/简介/Tag/Topic…',
+        cls: 'omni-search-input',
+        attr: { value: this.searchQuery },
+      });
+      search.addEventListener('input', () => { this.searchQuery = search.value; void this.renderList(); });
     }
     tb.createEl('button', { text: '刷新', cls: 'omni-chip omni-chip-refresh' })
       .addEventListener('click', () => { void this.refreshList(); });
@@ -235,6 +244,7 @@ export class OmniCollectionListView extends ItemView {
     else if (this.statusFilter === 'organized') filter.status = 'organized';
     else if (this.statusFilter === 'archived') filter.status = 'archived';
     if (this.priorityFilter !== 'all') filter.priority = this.priorityFilter;
+    if (this.searchQuery.trim()) filter.keyword = this.searchQuery;
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== 'all') items = items.filter((i) => i.saveType === this.saveTypeFilter);
@@ -394,6 +404,7 @@ export class OmniCollectionListView extends ItemView {
     else if (this.statusFilter === "organized") filter.status = "organized";
     else if (this.statusFilter === "archived") filter.status = "archived";
     if (this.priorityFilter !== "all") filter.priority = this.priorityFilter;
+    if (this.searchQuery.trim()) filter.keyword = this.searchQuery;
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== "all") items = items.filter((i) => i.saveType === this.saveTypeFilter);
@@ -418,6 +429,17 @@ export class OmniCollectionListView extends ItemView {
       this.selected.clear();
       this.renderBatchBar();
       void this.renderList();
+    });
+    bar.createEl("button", { text: "复制链接", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+      const urls = this.items.filter((i) => this.selected.has(i.id)).map((i) => i.url);
+      if (urls.length === 0) {
+        new Notice("请先勾选收藏");
+        return;
+      }
+      void navigator.clipboard
+        .writeText(urls.join("\n"))
+        .then(() => new Notice(`已复制 ${urls.length} 条链接`))
+        .catch((e) => new Notice(`复制失败：${(e as Error).message}`));
     });
     bar.createEl("button", { text: "批量 Tag", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("tag"));
     bar.createEl("button", { text: "批量 Topic", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("topic"));

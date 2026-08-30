@@ -14,6 +14,7 @@ import { MarkdownBuilder, sanitizeFilename, renderRating } from "./markdown/mark
 import { openManualAIModal } from "./ui/manual-ai.js";
 import { openManualAIBatchModal } from "./ui/manual-ai-batch.js";
 import { dailyCapReached, isSyncDue } from "./sync/sync-scheduler.js";
+import { pickDailyReview } from "./ui/helpers.js";
 
 export default class OmniCollectorPlugin extends Plugin {
   pluginSettings!: OmniSettings;
@@ -101,6 +102,7 @@ export default class OmniCollectorPlugin extends Plugin {
         },
         ensureCover: (url) => this.ensureCover(url),
         submitManualAI: (id, reply) => this.engine.submitManualAI(id, reply).then(() => undefined),
+        getVocabulary: () => this.tagVocabulary(),
       };
       return new OmniCollectionDetailView(leaf, source);
     });
@@ -203,6 +205,13 @@ export default class OmniCollectorPlugin extends Plugin {
       name: "打开收藏列表",
       callback: () => {
         void this.openCollectionList();
+      },
+    });
+    this.addCommand({
+      id: "daily-review",
+      name: "今日回顾（重现一条最旧的未整理收藏）",
+      callback: () => {
+        void this.controller.dailyReview();
       },
     });
     this.addCommand({
@@ -365,6 +374,16 @@ export default class OmniCollectorPlugin extends Plugin {
         new Notice(`分组识别完成：发现 ${candidates.length} 个候选（请到 AI 建议审核确认）`);
       },
       scanLocalFiles: () => this.scanLocalFiles(),
+      dailyReview: async () => {
+        const items = await this.engine.listCollections().catch(() => []);
+        const pick = pickDailyReview(items);
+        if (!pick) {
+          new Notice("今日回顾：暂无可回顾的收藏（先去同步吧）");
+          return;
+        }
+        new Notice(`今日回顾：${pick.title || pick.platformItemId}`);
+        await this.openCollectionDetail(pick.id);
+      },
     };
   }
 
@@ -650,9 +669,24 @@ export default class OmniCollectorPlugin extends Plugin {
   if (leaf) workspace.setActiveLeaf(leaf);
   }
 
+  /** 受控词表（借鉴 Cubox）：Tag/Topic/分组 TopN，供 Manual AI 模板对齐用户已有命名。 */
+  private async tagVocabulary(): Promise<{ tags: string[]; topics: string[]; groups: string[] }> {
+    const [tags, topics, groups] = await Promise.all([
+      this.engine.listTags().catch(() => []),
+      this.engine.listTopics().catch(() => []),
+      this.engine.listGroups().catch(() => []),
+    ]);
+    return {
+      tags: [...tags].sort((a, b) => b.count - a.count).slice(0, 30).map((t) => t.name),
+      topics: topics.filter((t) => t.status === "accepted" || (t.collection_ids ?? []).length > 0).slice(0, 30).map((t) => t.name),
+      groups: groups.slice(0, 30).map((g) => g.name),
+    };
+  }
+
   /** Manual AI 全局入口：先选收藏，再打开模板（PRD 19.3）。 */
   private async openManualAIPicker(): Promise<void> {
     const collections = await this.engine.listCollections().catch(() => []);
+    const vocabulary = await this.tagVocabulary().catch(() => undefined);
     const modal = new Modal(this.app);
     modal.titleEl.setText("选择收藏（Manual AI 模板）");
     const search = modal.contentEl.createEl("input", {
@@ -674,9 +708,12 @@ export default class OmniCollectorPlugin extends Plugin {
         row.createEl("span", { text: c.title || c.id, cls: "omni-title" });
         row.addEventListener("click", () => {
           modal.close();
-          openManualAIModal(this.app, c, {
-            submit: (id, reply) => this.engine.submitManualAI(id, reply).then(() => undefined),
-          });
+          openManualAIModal(
+            this.app,
+            c,
+            { submit: (id, reply) => this.engine.submitManualAI(id, reply).then(() => undefined) },
+            vocabulary,
+          );
         });
       }
       if (filtered.length === 0) {
@@ -691,6 +728,7 @@ export default class OmniCollectorPlugin extends Plugin {
   /** Manual AI 批量入口：按平台/时间段打包 N 条收藏，一次交给网页 AI。 */
   private async openManualAIBatchPicker(): Promise<void> {
     const collections = await this.engine.listCollections().catch(() => []);
+    const vocabulary = await this.tagVocabulary().catch(() => undefined);
     const modal = new Modal(this.app);
     modal.titleEl.setText("Manual AI 批量打包");
     const filters = modal.contentEl.createEl("div", { cls: "omni-batch-filter" });
@@ -746,12 +784,17 @@ export default class OmniCollectorPlugin extends Plugin {
         return;
       }
       modal.close();
-      openManualAIBatchModal(this.app, items, {
-        submit: (ids, reply) =>
-          this.engine
-            .submitManualAIBatch(ids, reply)
-            .then((res) => Number(res.payload?.saved ?? 0)),
-      });
+      openManualAIBatchModal(
+        this.app,
+        items,
+        {
+          submit: (ids, reply) =>
+            this.engine
+              .submitManualAIBatch(ids, reply)
+              .then((res) => Number(res.payload?.saved ?? 0)),
+        },
+        vocabulary,
+      );
     });
     refresh();
     modal.open();

@@ -27,6 +27,8 @@ export interface DetailDataSource {
   openLocalFile(filePath: string): void;
   ensureCover(url: string): Promise<string | null>;
   submitManualAI(collectionId: string, reply: string): Promise<void>;
+  /** 受控词表（Manual AI 模板对齐用户命名，借鉴 Cubox）。 */
+  getVocabulary(): Promise<{ tags: string[]; topics: string[]; groups: string[] }>;
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -182,9 +184,19 @@ export class OmniCollectionDetailView extends ItemView {
     const topicBtn = chips.createEl("button", { text: "＋Topic", cls: "omni-chip" });
     topicBtn.addEventListener("click", () => this.promptText("归入 Topic", "输入 Topic 名", (v) => this.source.onTopic(item.id, v)));
     const manualBtn = chips.createEl("button", { text: "Manual AI", cls: "omni-chip" });
-    manualBtn.addEventListener("click", () =>
-      openManualAIModal(this.app, item, { submit: (id, reply) => this.source.submitManualAI(id, reply) }),
-    );
+    manualBtn.addEventListener("click", () => {
+      void this.source
+        .getVocabulary()
+        .catch(() => undefined)
+        .then((vocabulary) =>
+          openManualAIModal(
+            this.app,
+            item,
+            { submit: (id, reply) => this.source.submitManualAI(id, reply) },
+            vocabulary,
+          ),
+        );
+    });
 
     // 已同步评论（PRD 7.3：可手动精选，精选写入 Markdown 用户区）
     if ((item.comments ?? []).length > 0) {

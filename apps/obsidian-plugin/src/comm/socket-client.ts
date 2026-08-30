@@ -383,9 +383,19 @@ export class EngineClient {
     });
   }
 
-  /** 查询收藏列表（DTO）。 */
-  async listCollections(): Promise<import("@omni/shared-core").CollectionDTO[]> {
+  /** 分组/系列列表（受控词表与分组管理用）。 */
+  async listGroups(): Promise<Array<{ id: string; name: string; type: string; collection_count: number }>> {
     const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "STATUS_QUERY",
+      payload: { scope: "groups" },
+    });
+    return (res.payload?.groups as Array<{ id: string; name: string; type: string; collection_count: number }>) ?? [];
+  }
+
+  /** 查询收藏列表（DTO）。 */
+  async listCollections(): Promise<import("@omni/shared-core").CollectionDTO[]> {    const res = await this.request({
       request_id: randomUUID(),
       timestamp: new Date().toISOString(),
       message_type: "STATUS_QUERY",
