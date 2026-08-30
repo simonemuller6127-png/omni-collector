@@ -37,7 +37,9 @@ Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and l
 - 稍后再看独立处理：转收藏 / 归档完成
 - 手动 Tag / Topic + 批量操作（批量 Tag / Topic / 优先级 / 整理 / 转收藏 / 归档）
 - Tag Atlas：平台标签自动提取、别名系统、疑似重复一键合并、Tag/Topic 聚合页接入官方关系图谱（双链）
-- Related Collections：同 ContentGroup 或同实体跨平台关联
+- Topic 重心：聚合页（hub）采用系统区/用户区隔离——成员 wikilink + Dataview 动态索引自动维护，「我的整理」用户区与 frontmatter `aliases` 永不覆盖；重命名自动跟随移动文件
+- Related Collections：同 ContentGroup / 同实体 / 本地语义相似（TF-IDF，规则 `semantic_related_enabled` 可选开启，纯本地无 API）
+- 超期提醒：侧边栏提示超期未整理（默认 14 天）与稍后再看超期（默认 30 天），天数由规则中心配置
 - 本地文件：多目录扫描（.md / .pdf），按系统区 URL 自动关联收藏；自动 / 手动扫描
 - Markdown 协议：系统区（Engine 自动写入）与用户区（永不覆盖）隔离，Dataview 模板
 
@@ -74,7 +76,15 @@ Cookie 只保存在本地数据目录（AES-256-GCM 加密，`data/cookies/*.enc
 ### 平台登录 / Cookie 设置（必读）
 
 > [!IMPORTANT]
-> **The plugin cannot log you in.** You must log in to each platform in your own browser first, then import the cookies into the plugin.
+> **The plugin cannot log you in.** Use the guided login window (recommended) or import cookies yourself.
+
+**方式一（推荐）：插件内登录窗口**
+
+1. 设置 → Omni Collector → 平台 Cookie → 选择平台 → 点 **登录窗口**
+2. 在弹出的浏览器窗口里手动登录（扫码 / 账号密码均可，插件与引擎**不接触你的账号密码**）
+3. 登录成功后引擎自动捕获会话并**加密保存到本地**（最长等待 5 分钟；Cookie 只存于 `data/cookies/*.enc`，绝不上传）→ 回侧边栏同步
+
+**方式二：Cookie-Editor 导入**
 
 1. Install the **Cookie-Editor** browser extension (search it in the Chrome or Edge extension store).
 2. Log in to the platform in your browser (e.g. https://www.bilibili.com or https://www.xiaohongshu.com).
@@ -85,8 +95,8 @@ Cookie 只保存在本地数据目录（AES-256-GCM 加密，`data/cookies/*.enc
 > Both Cookie-Editor JSON arrays and `k=v; k2=v2` header strings are accepted. Cookies are encrypted and stored only in your local data directory (`data/cookies/*.enc`); they are never uploaded.
 
 > [!IMPORTANT] 中文版
-> 插件无法代替你登录。请先在浏览器里登录平台，再用 **Cookie-Editor** 扩展导出 Cookie 后导入插件：
-> ① 安装浏览器扩展 Cookie-Editor（Chrome / Edge 商店搜索）→ ② 浏览器登录平台（如 bilibili.com / xiaohongshu.com）→ ③ 在登录页点 Cookie-Editor 图标 → Export → Copy as JSON → ④ Obsidian → Omni Collector 设置 → 「平台 Cookie」→ 选择平台 → 粘贴 JSON → 点「导入」→ ⑤ 回侧边栏同步。
+> 插件无法代替你登录。推荐在设置里点「登录窗口」，在弹出的浏览器中手动登录，成功后自动加密保存；也可用 **Cookie-Editor** 扩展导出后粘贴导入：
+> ① 设置 → 平台 Cookie → 选平台 → 「登录窗口」（或安装 Cookie-Editor → 浏览器登录 → Export → Copy as JSON → 粘贴导入）→ ② 回侧边栏同步。
 > 支持 JSON 数组和 `SESSDATA=xxx; bili_jct=yyy` 字符串格式；Cookie 只加密保存在本地 `data/cookies/*.enc`，绝不上传。
 
 ### 通过 BRAT（推荐，正式上架前）
@@ -100,6 +110,15 @@ Cookie 只保存在本地数据目录（AES-256-GCM 加密，`data/cookies/*.enc
 2. 放入 `<你的库>/.obsidian/plugins/omni-collector/`（目录不存在则新建）
 3. Obsidian 设置 → 第三方插件 → 启用 Omni Collector
 4. 在插件设置中填写数据目录 / Node.js 路径 / Engine 路径
+
+## 推荐搭配与多设备同步
+
+Omni Collector 产出的都是标准 Obsidian 笔记（frontmatter 原生 tag / wikilink / Dataview），可与社区插件自由组合：
+
+- **多设备同步**：安装 [Remotely Save](https://github.com/remotely-save/remotely-save) 走 Git / S3 / Cloudflare R2 / Syncthing / Obsidian Sync；`Omni Collector/` 笔记目录可同步，Engine 数据目录（SQLite + Cookie）保持每台设备独立（凭据与数据库不同步，更安全）。
+- **语义深挖**：安装 [Smart Connections](https://github.com/brianpetro/obsidian-smart-connections) 后可在笔记页获得基于 embedding 的相关笔记推荐；本插件内置的「本地语义相似」（TF-IDF，规则中心可选开启）无需任何 API，两者互补。
+- **原生 Tag 管理**：收藏笔记的 frontmatter tags 就是 Obsidian 原生标签，可用 [Tag Wrangler](https://github.com/pjeby/tag-wrangler) 改名/合并；但为保持 SQLite 与笔记一致，建议优先使用本插件的 Tag Atlas 操作。
+- **Topic 层级**：Topic/Tag 聚合页 frontmatter 预留 `aliases` 与标准 wikilink；如需层级导航，可在聚合页 frontmatter 加 `parent: [[上级聚合页]]`，配合 [Breadcrumbs](https://github.com/SkepticMystic/breadcrumbs) 获得面包屑与层级图谱。
 
 ## 开发
 

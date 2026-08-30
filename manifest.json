@@ -1,7 +1,7 @@
 {
   "id": "omni-collector",
   "name": "Omni Collector",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "minAppVersion": "1.5.0",
   "description": "Multi-platform favorite/like collector (Bilibili, YouTube, Xiaohongshu, MakerWorld, Xiaoheihe) with AI tagging, Tag Atlas aliases, Topic hubs, local file linking and graph integration.",
   "author": "Omni Collector",

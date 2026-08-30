@@ -3976,6 +3976,23 @@ var OmniSettingTab = class extends import_obsidian2.PluginSettingTab {
           }
         })
       );
+      statusRow.addButton(
+        (btn) => btn.setButtonText("\u767B\u5F55\u7A97\u53E3").onClick(async () => {
+          new import_obsidian2.Notice(`${label} \u767B\u5F55\u7A97\u53E3\u6253\u5F00\u4E2D\uFF0C\u8BF7\u5728\u7A97\u53E3\u91CC\u624B\u52A8\u767B\u5F55\uFF08\u6700\u957F\u7B49 5 \u5206\u949F\uFF0C\u6210\u529F\u540E\u81EA\u52A8\u52A0\u5BC6\u4FDD\u5B58\uFF0C\u65E0\u9700\u7C98\u8D34\uFF09`);
+          try {
+            const res = await this.plugin.engine.openLoginWindow(key);
+            if (res.payload?.logged_in) {
+              new import_obsidian2.Notice(`${label} \u767B\u5F55\u6210\u529F\uFF0CCookie \u5DF2\u52A0\u5BC6\u4FDD\u5B58\u5230\u672C\u5730\uFF08data/cookies\uFF09`);
+            } else {
+              new import_obsidian2.Notice(`${label} \u767B\u5F55\u672A\u5B8C\u6210\uFF1A${String(res.payload?.reason ?? "\u7A97\u53E3\u5DF2\u5173\u95ED")}`);
+            }
+          } catch (err) {
+            new import_obsidian2.Notice(`\u767B\u5F55\u7A97\u53E3\u5931\u8D25\uFF1A${err.message}`);
+          } finally {
+            await refreshStatus();
+          }
+        })
+      );
       void refreshStatus();
     }
     new import_obsidian2.Setting(containerEl).setName("Engine").setHeading();
@@ -4133,6 +4150,7 @@ var MESSAGE_TYPES = [
   "TASK_PRIORITY",
   "TASK_RATING",
   "TASK_COMMENT_STAR",
+  "TASK_LOGIN",
   "TASK_INDEX",
   "TASK_FETCH",
   "TASK_CONVERT",
@@ -4172,6 +4190,7 @@ var REQUIRED_PAYLOAD_FIELDS = {
   TASK_PRIORITY: ["collection_id", "priority"],
   TASK_RATING: ["collection_id", "rating"],
   TASK_COMMENT_STAR: ["collection_id", "comment_id", "starred"],
+  TASK_LOGIN: ["platform"],
   TASK_INDEX: ["folder"],
   TASK_FETCH: ["url"],
   TASK_CONVERT: ["collection_id", "to"],
@@ -4327,21 +4346,22 @@ var EngineClient = class {
       });
     });
   }
-  request(msg) {
+  request(msg, opts) {
     if (!this.started && msg.message_type !== "ENGINE_START" && this.autoStart) {
-      return this.ensureStarted().then(() => this.requestRaw(msg));
+      return this.ensureStarted().then(() => this.requestRaw(msg, opts));
     }
-    return this.requestRaw(msg);
+    return this.requestRaw(msg, opts);
   }
-  requestRaw(msg) {
+  requestRaw(msg, opts) {
     const full = { ...msg, timestamp: msg.timestamp ?? (/* @__PURE__ */ new Date()).toISOString() };
+    const timeoutMs = opts?.timeoutMs ?? this.requestTimeoutMs;
     return new Promise((resolve, reject) => {
       const socket = import_node_net.default.createConnection(this.opts.pipePath);
       let buffer = "";
       const timer = setTimeout(() => {
         socket.destroy();
         reject(new Error("request timeout"));
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
       socket.setEncoding("utf8");
       socket.on("connect", () => socket.write(`${JSON.stringify(full)}
 `));
@@ -4409,6 +4429,21 @@ var EngineClient = class {
       message_type: "COOKIE_IMPORT",
       payload: { platform, cookies_json: cookiesJson }
     });
+  }
+  /**
+   * 打开可视化登录窗口（PRD 26.1）：用户在窗口手动登录，成功后引擎自动捕获并加密 Cookie。
+   * 耗时任务（默认等待 5 分钟），期间可继续其他操作。
+   */
+  async openLoginWindow(platform, timeoutSeconds) {
+    return this.request(
+      {
+        request_id: (0, import_node_crypto.randomUUID)(),
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        message_type: "TASK_LOGIN",
+        payload: { platform, ...typeof timeoutSeconds === "number" ? { timeout_seconds: timeoutSeconds } : {} }
+      },
+      { timeoutMs: 57e4 }
+    );
   }
   /** 查询平台 Cookie 状态（不返回明文）。 */
   async cookieStatus(platform) {
@@ -4678,15 +4713,17 @@ var EngineClient = class {
       message_type: "STATUS_QUERY",
       payload: { scope: "summary" }
     });
-    return res.payload?.summary ?? {
-      total: 0,
-      unorganized: 0,
-      important: 0,
-      aiPending: 0,
-      watchLater: 0,
-      localFiles: 0,
-      topics: 0,
-      anomalies: { deleted: 0, syncFailed: 0, fileMissing: 0 }
+    const summary = res.payload?.summary ?? {};
+    return {
+      total: summary.total ?? 0,
+      unorganized: summary.unorganized ?? 0,
+      important: summary.important ?? 0,
+      aiPending: summary.aiPending ?? 0,
+      watchLater: summary.watchLater ?? 0,
+      localFiles: summary.localFiles ?? 0,
+      topics: summary.topics ?? 0,
+      anomalies: summary.anomalies ?? { deleted: 0, syncFailed: 0, fileMissing: 0 },
+      overdue: summary.overdue ?? { unorganized: 0, watchLater: 0 }
     };
   }
   /** 批量操作。 */
@@ -4876,7 +4913,10 @@ var OmniSidebarView = class extends import_obsidian3.ItemView {
         const summary = await this.engine.getSummary().catch(() => null);
         if (summary) {
           const a = summary.anomalies;
-          this.summaryEl.setText(`\u672A\u6574\u7406 ${summary.unorganized} \xB7 \u91CD\u8981/\u9879\u76EE ${summary.important} \xB7 \u7A0D\u540E\u518D\u770B ${summary.watchLater} \xB7 \u5F85\u5BA1 AI ${summary.aiPending} \xB7 Topic ${summary.topics} \xB7 \u672C\u5730 ${summary.localFiles} \xB7 \u5F02\u5E38 ${a.deleted + a.syncFailed + a.fileMissing}`);
+          const od = summary.overdue ?? { unorganized: 0, watchLater: 0 };
+          this.summaryEl.setText(
+            `\u672A\u6574\u7406 ${summary.unorganized} \xB7 \u91CD\u8981/\u9879\u76EE ${summary.important} \xB7 \u7A0D\u540E\u518D\u770B ${summary.watchLater} \xB7 \u5F85\u5BA1 AI ${summary.aiPending} \xB7 Topic ${summary.topics} \xB7 \u672C\u5730 ${summary.localFiles} \xB7 \u5F02\u5E38 ${a.deleted + a.syncFailed + a.fileMissing}` + (od.unorganized + od.watchLater > 0 ? ` \xB7 \u23F0\u8D85\u671F\uFF1A\u672A\u6574\u7406 ${od.unorganized} / \u7A0D\u540E\u518D\u770B ${od.watchLater}` : "")
+          );
         }
       } catch {
       }
@@ -5895,41 +5935,81 @@ ${links}
   /** Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。 */
   buildTopicHub(topicName, noteLinks) {
     const name = (topicName || "\u672A\u547D\u540D\u4E3B\u9898").trim();
-    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
-    return [
-      "---",
-      `topic: ${yamlString(name)}`,
-      `tags: ["topic/${sanitizeFilename(name)}"]`,
-      "---",
-      "",
-      `# ${name}`,
-      "",
-      "> \u4E3B\u9898\u805A\u5408\u9875\uFF08Omni Collector \u81EA\u52A8\u751F\u6210\uFF0C\u4FEE\u6539\u4F1A\u88AB\u8986\u76D6\uFF09",
-      "",
-      "## \u6536\u85CF",
-      "",
-      links,
-      ""
-    ].join("\n");
+    return this.buildHub(name, noteLinks, {
+      frontmatterKey: "topic",
+      tags: [JSON.stringify(`topic/${sanitizeFilename(name)}`)],
+      dataviewField: "topics"
+    });
   }
   /** Tag 聚合页（PRD 16 / 关系图谱联动）：主 Tag 节点 + 成员笔记 wikilink。 */
   buildTagHub(tagName, noteLinks) {
     const name = (tagName || "\u672A\u547D\u540D\u6807\u7B7E").trim();
-    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
+    return this.buildHub(name, noteLinks, {
+      frontmatterKey: "tag",
+      tags: [JSON.stringify(sanitizeFilename(name))],
+      dataviewField: "tags"
+    });
+  }
+  /**
+   * 聚合页统一构造（PRD 17/16）：与收藏笔记相同的区域隔离协议——
+   * 系统区（成员 wikilink + Dataview 动态索引）自动维护；「我的整理」起为用户区，自动化禁止触碰。
+   * frontmatter 的 aliases 供用户自定义别名（图谱/解析原生生效）。
+   */
+  buildHub(name, noteLinks, cfg) {
     return [
       "---",
-      `tags: ["${sanitizeFilename(name)}"]`,
+      `${cfg.frontmatterKey}: ${yamlString(name)}`,
+      `tags: [${cfg.tags.join(", ")}]`,
+      "aliases: []",
       "---",
       "",
-      `# ${name}`,
+      `# ${escapeTitleHash(name)}`,
       "",
-      "> \u6807\u7B7E\u805A\u5408\u9875\uFF08Omni Collector \u81EA\u52A8\u751F\u6210\uFF0C\u4FEE\u6539\u4F1A\u88AB\u8986\u76D6\uFF09",
+      `> \u805A\u5408\u9875\u8BF4\u660E\uFF1A\u7CFB\u7EDF\u533A\uFF08\u6807\u8BB0\u6CE8\u91CA\u4E4B\u95F4\uFF09\u7531 Omni Collector \u81EA\u52A8\u7EF4\u62A4\uFF1B\u300C## \u6211\u7684\u6574\u7406\u300D\u53CA\u4E4B\u540E\u4E3A\u7528\u6237\u533A\uFF0C\u4EFB\u4F55\u81EA\u52A8\u5316\u903B\u8F91\u7981\u6B62\u4FEE\u6539\u3002`,
       "",
-      "## \u6536\u85CF",
+      SYSTEM_START,
+      this.buildHubSystemZone(name, noteLinks, cfg.dataviewField),
+      SYSTEM_END,
       "",
-      links,
+      "## \u6211\u7684\u6574\u7406",
       ""
     ].join("\n");
+  }
+  /** 聚合页系统区：成员 wikilink（图谱边）+ Dataview 动态索引（按 frontmatter 元数据实时查询）。 */
+  buildHubSystemZone(name, noteLinks, dataviewField) {
+    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
+    const safeName = name.replace(/"/g, "'");
+    return [
+      "## \u6536\u85CF",
+      "",
+      links || "\uFF08\u6682\u65E0\u6210\u5458\uFF09",
+      "",
+      "## \u52A8\u6001\u7D22\u5F15",
+      "",
+      "```dataview",
+      "TABLE priority AS \u4F18\u5148\u7EA7, organize_status AS \u6574\u7406\u72B6\u6001, collected_at AS \u6536\u85CF\u65E5\u671F",
+      'FROM "Omni Collector"',
+      `WHERE contains(${dataviewField}, "${safeName}")`,
+      "SORT collected_at DESC",
+      "```",
+      ""
+    ].join("\n");
+  }
+  /**
+   * 更新聚合页系统区（成员/标题变化时）：只替换标记内内容并镜像 H1，
+   * frontmatter（含用户 aliases）与「我的整理」用户区原样保留。
+   * 返回 null 表示文件缺少系统区标记（旧格式，由调用方决定升级策略）。
+   */
+  replaceHubSystemZone(md, hubTitle, noteLinks, dataviewField) {
+    if (!this.validateMarkers(md)) return null;
+    const start = md.indexOf(SYSTEM_START);
+    const end = md.indexOf(SYSTEM_END) + SYSTEM_END.length;
+    const head = md.slice(0, start);
+    const tail = md.slice(end);
+    const system = `${SYSTEM_START}
+${this.buildHubSystemZone(hubTitle, noteLinks, dataviewField)}${SYSTEM_END}`;
+    const updatedHead = head.replace(/^# .*$/m, `# ${escapeTitleHash(hubTitle)}`);
+    return `${updatedHead}${system}${tail}`;
   }
   /**
    * 替换用户区指定小节的内容（仅系统区标记之后）。
@@ -6170,6 +6250,7 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
         const row = relatedBox.createEl("div", { cls: "omni-related-row" });
         row.createEl("span", { text: PLATFORM_LABELS[r.platform] ?? r.platform, cls: "omni-badge omni-badge-platform" });
         row.createEl("span", { text: r.title || r.id, cls: "omni-related-title" });
+        if (r.reason) row.createEl("span", { text: r.reason, cls: "omni-badge omni-badge-reason" });
         row.addEventListener("click", () => {
           this.currentId = r.id;
           void this.renderContent();
@@ -6388,9 +6469,17 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         listTags: () => this.engine.listTags(),
         addAlias: (tag, alias) => this.engine.addTagAlias(tag, alias).then(() => void 0),
         mergeTags: (sourceTag, target) => this.engine.mergeTags(sourceTag, target).then(() => void 0),
-        renameTag: (tag, next) => this.engine.renameTag(tag, next).then(() => void 0),
+        renameTag: async (tag, next) => {
+          await this.engine.renameTag(tag, next);
+          await this.renameHubFile("Tags", tag, next);
+        },
         listTopics: () => this.engine.listTopics(),
-        renameTopic: (id, name) => this.engine.renameTopic(id, name).then(() => void 0),
+        renameTopic: async (id, name) => {
+          const topics = await this.engine.listTopics().catch(() => []);
+          const old = topics.find((t) => t.id === id)?.name ?? "";
+          await this.engine.renameTopic(id, name);
+          if (old && old !== name) await this.renameHubFile("Topics", old, name);
+        },
         listCollections: () => this.engine.listCollections(),
         openDetail: (id) => this.openCollectionDetail(id),
         refreshMarkdown: () => this.generateCollectionMarkdown()
@@ -6756,11 +6845,13 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         }).filter(Boolean);
         const hubPath = `${topicDir}/${sanitizeFilename(topic.name)}.md`;
         try {
-          const content = builder.buildTopicHub(topic.name, links);
+          const fresh = builder.buildTopicHub(topic.name, links);
           if (await vault.adapter.exists(hubPath)) {
-            await vault.adapter.write(hubPath, content);
+            const existing = await vault.adapter.read(hubPath);
+            const next = builder.validateMarkers(existing) ? builder.replaceHubSystemZone(existing, topic.name, links, "topics") ?? fresh : fresh;
+            await vault.adapter.write(hubPath, next);
           } else {
-            await vault.create(hubPath, content);
+            await vault.create(hubPath, fresh);
           }
         } catch {
         }
@@ -6777,11 +6868,13 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         const links = collections.filter((c) => (c.tags ?? []).includes(tag.name)).map((c) => `Omni Collector/${c.platform}/${sanitizeFilename(c.title || c.platformItemId)}`);
         const hubPath = `${tagDir}/${sanitizeFilename(tag.name)}.md`;
         try {
-          const content = builder.buildTagHub(tag.name, links);
+          const fresh = builder.buildTagHub(tag.name, links);
           if (await vault.adapter.exists(hubPath)) {
-            await vault.adapter.write(hubPath, content);
+            const existing = await vault.adapter.read(hubPath);
+            const next = builder.validateMarkers(existing) ? builder.replaceHubSystemZone(existing, tag.name, links, "tags") ?? fresh : fresh;
+            await vault.adapter.write(hubPath, next);
           } else {
-            await vault.create(hubPath, content);
+            await vault.create(hubPath, fresh);
           }
         } catch {
         }
@@ -6808,6 +6901,14 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
       if (next !== null && next !== existing) await vault.adapter.write(filePath, next);
     } catch {
     }
+  }
+  /** 聚合页重命名跟随：vault.rename 自动更新全库 wikilink（图谱边不断），H1 由下次生成镜像。 */
+  async renameHubFile(dir, oldName, newName) {
+    const oldPath = `Omni Collector/${dir}/${sanitizeFilename(oldName)}.md`;
+    const newPath = `Omni Collector/${dir}/${sanitizeFilename(newName)}.md`;
+    if (oldPath === newPath) return;
+    const file = this.app.vault.getAbstractFileByPath(oldPath);
+    if (file) await this.app.vault.rename(file, newPath);
   }
   async openCollectionList(platform) {
     const { workspace } = this.app;

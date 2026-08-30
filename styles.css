@@ -584,3 +584,7 @@
 .omni-badge-rating {
   color: var(--color-yellow);
 }
+.omni-badge-reason {
+  font-size: 0.82em;
+  color: var(--text-muted);
+}
