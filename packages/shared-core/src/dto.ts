@@ -33,7 +33,7 @@ export interface CollectionDTO {
     starred?: boolean;
   }>;
   linkedFiles?: string[];
-  related?: Array<{ id: string; platform: string; title: string; saveType: CollectionDTO["saveType"]; contentType: string }>;
+  related?: Array<{ id: string; platform: string; title: string; saveType: CollectionDTO["saveType"]; contentType: string; reason?: string }>;
 }
 
 export interface UserZone {

@@ -268,6 +268,7 @@ export class OmniCollectionDetailView extends ItemView {
         const row = relatedBox.createEl("div", { cls: "omni-related-row" });
         row.createEl("span", { text: PLATFORM_LABELS[r.platform] ?? r.platform, cls: "omni-badge omni-badge-platform" });
         row.createEl("span", { text: r.title || r.id, cls: "omni-related-title" });
+        if (r.reason) row.createEl("span", { text: r.reason, cls: "omni-badge omni-badge-reason" });
         row.addEventListener("click", () => {
           this.currentId = r.id;
           void this.renderContent();

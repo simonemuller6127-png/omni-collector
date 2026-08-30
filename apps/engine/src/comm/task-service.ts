@@ -18,6 +18,7 @@ import {
 import type { CollectionDTO } from "@omni/shared-core";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
 import { ContentGroupService, normalizeEntity } from "../group/content-group-service.js";
+import { buildSemanticIndex, semanticRelated, type SemanticDoc } from "../group/semantic-related.js";
 import { FileIndexer } from "../fileindex/file-indexer.js";
 import { BrowserSessionManager, parseStoredCookies } from "../sync/browser-session.js";
 import { runLoginWindow } from "../sync/login-window.js";
@@ -422,26 +423,44 @@ export class TaskService {
           .prepare("SELECT file_path FROM local_files WHERE linked_collection_id = ? ORDER BY modified_at DESC")
           .all(id) as Array<{ file_path: string }>).map((f) => f.file_path);
         const group = groups.groupOfCollection(col.id);
-        // Related Collections：同分组优先，否则同标题+同作者的跨平台启发式
-        let relatedRows = group ? groups.listCollectionsInGroup(group.id).filter((r) => r.id !== col.id) : [];
-        if (relatedRows.length === 0) {
-          relatedRows = collections
-            .listAll()
-            .filter(
-              (c) =>
-                c.id !== col.id &&
-                normalizeEntity(c.title ?? "") === normalizeEntity(col.title ?? "") &&
-                (c.author ?? "").toLowerCase() === (col.author ?? "").toLowerCase(),
-            )
-            .slice(0, 10);
+        // Related Collections：同分组优先，其次同标题+同作者的跨平台启发式，最后本地语义相似（规则开关，默认关）
+        const related: Array<{ id: string; platform: string; title: string; saveType: CollectionDTO["saveType"]; contentType: string; reason?: string }> = [];
+        if (group) {
+          for (const r of groups.listCollectionsInGroup(group.id)) {
+            if (r.id === col.id) continue;
+            related.push({ id: r.id, platform: r.platform, title: r.title ?? "", saveType: r.save_type as CollectionDTO["saveType"], contentType: r.content_type, reason: "同分组" });
+          }
         }
-        const related = relatedRows.slice(0, 10).map((r) => ({
-          id: r.id,
-          platform: r.platform,
-          title: r.title ?? "",
-          saveType: r.save_type,
-          contentType: r.content_type,
-        }));
+        if (related.length === 0) {
+          for (const r of collections.listAll()) {
+            if (r.id === col.id) continue;
+            if (normalizeEntity(r.title ?? "") !== normalizeEntity(col.title ?? "")) continue;
+            if ((r.author ?? "").toLowerCase() !== (col.author ?? "").toLowerCase()) continue;
+            related.push({ id: r.id, platform: r.platform, title: r.title ?? "", saveType: r.save_type as CollectionDTO["saveType"], contentType: r.content_type, reason: "同实体" });
+            if (related.length >= 10) break;
+          }
+        }
+        if (this.rules.getBool("semantic_related_enabled", false)) {
+          const seen = new Set([col.id, ...related.map((r) => r.id)]);
+          const docs: SemanticDoc[] = collections.listAll().map((c) => ({ id: c.id, title: c.title ?? "" }));
+          const tagRows = this.db
+            .prepare("SELECT ct.collection_id AS cid, t.name AS name FROM content_tags ct JOIN tags t ON t.id = ct.tag_id")
+            .all() as Array<{ cid: string; name: string }>;
+          for (const row of tagRows) {
+            const doc = docs.find((d) => d.id === row.cid);
+            if (doc) (doc.tags ??= []).push(row.name);
+          }
+          const index = buildSemanticIndex(docs);
+          for (const hit of semanticRelated(index, col.id, 5)) {
+            if (related.length >= 15) break;
+            const doc = docs.find((d) => d.id === hit.id);
+            if (!doc || seen.has(hit.id)) continue;
+            const row = collections.findById(hit.id);
+            if (!row) continue;
+            related.push({ id: row.id, platform: row.platform, title: row.title ?? "", saveType: row.save_type as CollectionDTO["saveType"], contentType: row.content_type, reason: "语义相似" });
+          }
+        }
+        const relatedLimited = related.slice(0, 15);
         const dto: CollectionDTO = {
           id: col.id,
           platform: col.platform,
@@ -467,7 +486,7 @@ export class TaskService {
           topics: topicRepo.listTopicsOfCollection(col.id).map((t) => t.name),
           comments,
           linkedFiles,
-          related,
+          related: relatedLimited,
         };
         return complete(msg.request_id, { task: "status_query", scope, collection: dto });
       }
