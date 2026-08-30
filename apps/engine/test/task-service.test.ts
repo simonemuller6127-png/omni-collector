@@ -683,4 +683,31 @@ describe("TaskService (internal, fake provider)", () => {
       service.dispose();
     }
   });
+
+  it("user_feedback events recorded on organize/priority/rating (PRD 18.1)", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const col = new CollectionRepository(manager.getDb()).upsertByPlatformItem("bilibili", "bv3", { url: "https://b23.tv/BV3", title: "视频3" });
+      manager.close();
+
+      const h = service.handlers();
+      await h.TASK_ORGANIZE?.(makeMsg("TASK_ORGANIZE", { collection_id: col.id, organize_status: "organized" }));
+      await h.TASK_PRIORITY?.(makeMsg("TASK_PRIORITY", { collection_id: col.id, priority: "project" }));
+      await h.TASK_RATING?.(makeMsg("TASK_RATING", { collection_id: col.id, rating: 5 }));
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const events = (verifier.getDb().prepare("SELECT event_type FROM user_feedback WHERE collection_id = ?").all(col.id) as Array<{ event_type: string }>).map((r) => r.event_type);
+      expect(events).toContain("organize_status_set");
+      expect(events).toContain("organize_completed");
+      expect(events).toContain("priority_set");
+      expect(events).toContain("rating_set");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
 });

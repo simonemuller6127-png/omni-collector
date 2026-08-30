@@ -631,6 +631,7 @@ export class EngineClient {
     localFiles: number;
     topics: number;
     anomalies: { deleted: number; syncFailed: number; fileMissing: number };
+    overdue: { unorganized: number; watchLater: number };
   }> {
     const res = await this.request({
       request_id: randomUUID(),
@@ -638,7 +639,7 @@ export class EngineClient {
       message_type: "STATUS_QUERY",
       payload: { scope: "summary" },
     });
-    return (res.payload?.summary as {
+    const summary = (res.payload?.summary ?? {}) as Partial<{
       total: number;
       unorganized: number;
       important: number;
@@ -647,9 +648,18 @@ export class EngineClient {
       localFiles: number;
       topics: number;
       anomalies: { deleted: number; syncFailed: number; fileMissing: number };
-    }) ?? {
-      total: 0, unorganized: 0, important: 0, aiPending: 0, watchLater: 0, localFiles: 0, topics: 0,
-      anomalies: { deleted: 0, syncFailed: 0, fileMissing: 0 },
+      overdue: { unorganized: number; watchLater: number };
+    }>;
+    return {
+      total: summary.total ?? 0,
+      unorganized: summary.unorganized ?? 0,
+      important: summary.important ?? 0,
+      aiPending: summary.aiPending ?? 0,
+      watchLater: summary.watchLater ?? 0,
+      localFiles: summary.localFiles ?? 0,
+      topics: summary.topics ?? 0,
+      anomalies: summary.anomalies ?? { deleted: 0, syncFailed: 0, fileMissing: 0 },
+      overdue: summary.overdue ?? { unorganized: 0, watchLater: 0 },
     };
   }
 

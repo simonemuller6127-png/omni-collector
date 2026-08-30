@@ -177,7 +177,11 @@ export class OmniSidebarView extends ItemView {
         const summary = await this.engine.getSummary().catch(() => null);
         if (summary) {
           const a = summary.anomalies;
-          this.summaryEl.setText(`未整理 ${summary.unorganized} · 重要/项目 ${summary.important} · 稍后再看 ${summary.watchLater} · 待审 AI ${summary.aiPending} · Topic ${summary.topics} · 本地 ${summary.localFiles} · 异常 ${a.deleted + a.syncFailed + a.fileMissing}`);
+          const od = summary.overdue ?? { unorganized: 0, watchLater: 0 };
+          this.summaryEl.setText(
+            `未整理 ${summary.unorganized} · 重要/项目 ${summary.important} · 稍后再看 ${summary.watchLater} · 待审 AI ${summary.aiPending} · Topic ${summary.topics} · 本地 ${summary.localFiles} · 异常 ${a.deleted + a.syncFailed + a.fileMissing}` +
+            (od.unorganized + od.watchLater > 0 ? ` · ⏰超期：未整理 ${od.unorganized} / 稍后再看 ${od.watchLater}` : ""),
+          );
         }
       } catch {
         // 状态查询失败不覆盖连接状态

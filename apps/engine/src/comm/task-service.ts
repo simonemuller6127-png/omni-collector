@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { OmniMessage } from "@omni/shared-core";
 import type { AIProvider } from "@omni/ai";
 import { parseBatchSuggestions, parseSuggestions, parseTagPayload } from "@omni/ai";
@@ -520,6 +521,19 @@ export class TaskService {
         const deleted = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE content_status IN ('deleted','unavailable')").get() as { n: number };
         const syncFailed = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE sync_status='failed'").get() as { n: number };
         const fileMissing = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE content_status='file_missing'").get() as { n: number };
+        // 超期提醒（PRD 21.1 规则：待整理 14 天 / 稍后再看 30 天，均取自规则中心）
+        const unorgDays = this.rules.getNumber("unorganized_reminder_days", 14);
+        const wlDays = this.rules.getNumber("watch_later_expiry_days", 30);
+        const overdueUnorganized = this.db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM collections WHERE organize_status='unorganized' AND content_status='active' AND collected_at <= datetime('now', ?)",
+          )
+          .get(`-${Math.max(1, unorgDays)} days`) as { n: number };
+        const overdueWatchLater = this.db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM collections WHERE save_type='watch_later' AND content_status='active' AND organize_status != 'archived' AND collected_at <= datetime('now', ?)",
+          )
+          .get(`-${Math.max(1, wlDays)} days`) as { n: number };
         return complete(msg.request_id, {
           task: "status_query",
           scope,
@@ -532,6 +546,7 @@ export class TaskService {
             localFiles: localFiles.n,
             topics: topics.n,
             anomalies: { deleted: deleted.n, syncFailed: syncFailed.n, fileMissing: fileMissing.n },
+            overdue: { unorganized: overdueUnorganized.n, watchLater: overdueWatchLater.n },
           },
         });
       }
@@ -551,6 +566,8 @@ export class TaskService {
     }
     try {
       new CollectionRepository(this.db).setOrganizeState(collectionId, status as "unorganized" | "viewed" | "organized" | "archived");
+      this.recordFeedback(collectionId, "organize_status_set", { status });
+      if (status === "organized") this.recordFeedback(collectionId, "organize_completed");
       return complete(msg.request_id, { task: "organize", collection_id: collectionId, organize_status: status });
     } catch (err) {
       return error(msg.request_id, "ORG_001", `ORG_001: ${(err as Error).message}`);
@@ -687,6 +704,17 @@ export class TaskService {
     return new Map(rows.map((r) => [r.collection_id, r.user_rating]));
   }
 
+  /** 用户行为事件采集（PRD 18.1 user_feedback）：失败不影响主流程。 */
+  private recordFeedback(collectionId: string, eventType: string, data?: Record<string, unknown>): void {
+    try {
+      this.db
+        .prepare("INSERT INTO user_feedback (id, collection_id, event_type, event_data) VALUES (?, ?, ?, ?)")
+        .run(randomUUID(), collectionId, eventType, data === undefined ? null : JSON.stringify(data));
+    } catch {
+      // 反馈记录失败不影响主流程
+    }
+  }
+
   /** 用户手动设置收藏优先级（普通/重要/项目/知识）。 */
   async priority(msg: OmniMessage): Promise<OmniMessage> {
     const collectionId = String(msg.payload.collection_id ?? "");
@@ -697,6 +725,7 @@ export class TaskService {
     }
     try {
       new CollectionRepository(this.db).setPriority(collectionId, priority as "normal" | "important" | "project" | "knowledge");
+      this.recordFeedback(collectionId, "priority_set", { priority });
       return complete(msg.request_id, { task: "priority", collection_id: collectionId, priority });
     } catch (err) {
       return error(msg.request_id, "PRI_001", `PRI_001: ${(err as Error).message}`);
@@ -745,6 +774,7 @@ export class TaskService {
         return error(msg.request_id, "RAT_002", "RAT_002: collection not found");
       }
       const note = new UserRepository(this.db).setRating(collectionId, raw === 0 ? null : raw);
+      this.recordFeedback(collectionId, "rating_set", { rating: note.user_rating ?? 0 });
       return complete(msg.request_id, { task: "rating", collection_id: collectionId, rating: note.user_rating ?? null });
     } catch (err) {
       return error(msg.request_id, "RAT_001", `RAT_001: ${(err as Error).message}`);
@@ -764,6 +794,7 @@ export class TaskService {
       if (!ok) {
         return error(msg.request_id, "STAR_002", "STAR_002: comment not found in collection");
       }
+      this.recordFeedback(collectionId, "comment_starred", { comment_id: commentId, starred });
       return complete(msg.request_id, { task: "comment_star", collection_id: collectionId, comment_id: commentId, starred });
     } catch (err) {
       return error(msg.request_id, "STAR_001", `STAR_001: ${(err as Error).message}`);
@@ -783,10 +814,12 @@ export class TaskService {
         this.db
           .prepare("UPDATE collections SET save_type='favorited', updated_at=? WHERE id=?")
           .run(new Date().toISOString(), collectionId);
+        this.recordFeedback(collectionId, "watch_later_converted");
       } else {
         this.db
           .prepare("UPDATE collections SET organize_status='archived', updated_at=? WHERE id=?")
           .run(new Date().toISOString(), collectionId);
+        this.recordFeedback(collectionId, "watch_later_archived");
       }
       return complete(msg.request_id, { task: "convert", collection_id: collectionId, to });
     } catch (err) {
@@ -831,15 +864,20 @@ export class TaskService {
             }
             case "priority":
               collections.setPriority(id, value as "normal" | "important" | "project" | "knowledge");
+              this.recordFeedback(id, "priority_set", { priority: value, batch: true });
               break;
             case "organize":
               collections.setOrganizeState(id, value as "unorganized" | "viewed" | "organized" | "archived");
+              this.recordFeedback(id, "organize_status_set", { status: value, batch: true });
+              if (value === "organized") this.recordFeedback(id, "organize_completed", { batch: true });
               break;
             case "convert":
               if (value === "favorited") {
                 this.db.prepare("UPDATE collections SET save_type='favorited', updated_at=? WHERE id=?").run(stamp, id);
+                this.recordFeedback(id, "watch_later_converted", { batch: true });
               } else if (value === "archived") {
                 this.db.prepare("UPDATE collections SET organize_status='archived', updated_at=? WHERE id=?").run(stamp, id);
+                this.recordFeedback(id, "watch_later_archived", { batch: true });
               } else {
                 failed += 1;
                 continue;
