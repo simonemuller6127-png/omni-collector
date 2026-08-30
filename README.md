@@ -123,6 +123,7 @@ Omni Collector 产出的都是标准 Obsidian 笔记（frontmatter 原生 tag / 
 - **语义深挖**：安装 [Smart Connections](https://github.com/brianpetro/obsidian-smart-connections) 后可在笔记页获得基于 embedding 的相关笔记推荐；本插件内置的「本地语义相似」（TF-IDF，规则中心可选开启）无需任何 API，两者互补。
 - **原生 Tag 管理**：收藏笔记的 frontmatter tags 就是 Obsidian 原生标签，可用 [Tag Wrangler](https://github.com/pjeby/tag-wrangler) 改名/合并；但为保持 SQLite 与笔记一致，建议优先使用本插件的 Tag Atlas 操作。
 - **Topic 层级**：Topic/Tag 聚合页 frontmatter 预留 `aliases` 与标准 wikilink；如需层级导航，可在聚合页 frontmatter 加 `parent: [[上级聚合页]]`，配合 [Breadcrumbs](https://github.com/SkepticMystic/breadcrumbs) 获得面包屑与层级图谱。
+- **文件预览渲染（方式C，PRD 9.6）**：本地关联文件以 Obsidian 笔记/嵌入方式打开；如需在库内直接渲染 Word/Excel 等，可加装 Docxer（docx）、Sheet Plus（xlsx）等社区插件，本插件不重复造渲染器。
 
 ## 开发
 
