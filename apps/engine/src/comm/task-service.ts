@@ -20,6 +20,7 @@ import { AiQueueRunner } from "../ai/ai-queue-runner.js";
 import { ContentGroupService, normalizeEntity } from "../group/content-group-service.js";
 import { FileIndexer } from "../fileindex/file-indexer.js";
 import { BrowserSessionManager, parseStoredCookies } from "../sync/browser-session.js";
+import { runLoginWindow } from "../sync/login-window.js";
 import { CookieCipher } from "../crypto/cookie-cipher.js";
 import { XiaohongshuAdapter } from "@omni/adapters";
 import { SUPPORTED_PLATFORMS, SyncRunner } from "../sync/sync-runner.js";
@@ -109,6 +110,7 @@ export class TaskService {
       RULE_LIST: (msg) => this.ruleList(msg),
       COOKIE_IMPORT: (msg) => this.cookieImport(msg),
       COOKIE_STATUS: (msg) => this.cookieStatus(msg),
+      TASK_LOGIN: (msg) => this.login(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
     };
   }
@@ -682,9 +684,38 @@ export class TaskService {
     }
   }
 
+  /**
+   * PRD 26.1 ②③：可视化登录窗口引导用户手动登录。
+   * 插件/引擎不接触账号密码；登录成功后自动捕获 storageState 并加密保存 Cookie（仅本地，绝不上传）。
+   * 耗时任务：连接级并发，不阻塞其他请求。
+   */
+  async login(msg: OmniMessage): Promise<OmniMessage> {
+    const platform = String(msg.payload.platform ?? "");
+    if (!SUPPORTED_PLATFORMS.includes(platform)) {
+      return error(msg.request_id, "LOGIN_001", `LOGIN_001: unsupported platform: ${platform}`);
+    }
+    const timeoutSeconds = Number(msg.payload.timeout_seconds ?? 300);
+    try {
+      const res = await runLoginWindow({ platform, dataDir: this.opts.dataDir, timeoutSeconds });
+      if (res.loggedIn) {
+        const accounts = new AccountRepository(this.db);
+        accounts.getOrCreate(platform);
+        accounts.setStatus(platform, "active");
+      }
+      return complete(msg.request_id, {
+        task: "login",
+        platform,
+        logged_in: res.loggedIn,
+        cookie_count: res.cookieCount,
+        ...(res.reason ? { reason: res.reason } : {}),
+      });
+    } catch (err) {
+      return error(msg.request_id, "LOGIN_001", `LOGIN_001: ${(err as Error).message}`);
+    }
+  }
+
   /** 用户手动评分 1~5 星（PRD 29.2）；rating=0 表示清除。ADR-006：权威为 Markdown 用户区，本表为同步副本。 */
-  async rating(msg: OmniMessage): Promise<OmniMessage> {
-    const collectionId = String(msg.payload.collection_id ?? "");
+  async rating(msg: OmniMessage): Promise<OmniMessage> {    const collectionId = String(msg.payload.collection_id ?? "");
     const raw = Number(msg.payload.rating);
     if (!collectionId || !Number.isInteger(raw) || raw < 0 || raw > 5) {
       return error(msg.request_id, "RAT_001", "RAT_001: invalid collection_id or rating (integer 0~5)");

@@ -144,22 +144,29 @@ export class EngineClient {
     });
   }
 
-  request(msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string }): Promise<OmniMessage> {
+  request(
+    msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string },
+    opts?: { timeoutMs?: number },
+  ): Promise<OmniMessage> {
     if (!this.started && msg.message_type !== "ENGINE_START" && this.autoStart) {
-      return this.ensureStarted().then(() => this.requestRaw(msg));
+      return this.ensureStarted().then(() => this.requestRaw(msg, opts));
     }
-    return this.requestRaw(msg);
+    return this.requestRaw(msg, opts);
   }
 
-  private requestRaw(msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string }): Promise<OmniMessage> {
+  private requestRaw(
+    msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string },
+    opts?: { timeoutMs?: number },
+  ): Promise<OmniMessage> {
     const full: OmniMessage = { ...msg, timestamp: msg.timestamp ?? new Date().toISOString() };
+    const timeoutMs = opts?.timeoutMs ?? this.requestTimeoutMs;
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(this.opts.pipePath);
       let buffer = "";
       const timer = setTimeout(() => {
         socket.destroy();
         reject(new Error("request timeout"));
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
       socket.setEncoding("utf8");
       socket.on("connect", () => socket.write(`${JSON.stringify(full)}\n`));
       socket.on("data", (chunk: string) => {
@@ -235,9 +242,24 @@ export class EngineClient {
     });
   }
 
+  /**
+   * 打开可视化登录窗口（PRD 26.1）：用户在窗口手动登录，成功后引擎自动捕获并加密 Cookie。
+   * 耗时任务（默认等待 5 分钟），期间可继续其他操作。
+   */
+  async openLoginWindow(platform: string, timeoutSeconds?: number): Promise<OmniMessage> {
+    return this.request(
+      {
+        request_id: randomUUID(),
+        timestamp: new Date().toISOString(),
+        message_type: "TASK_LOGIN",
+        payload: { platform, ...(typeof timeoutSeconds === "number" ? { timeout_seconds: timeoutSeconds } : {}) },
+      },
+      { timeoutMs: 570_000 },
+    );
+  }
+
   /** 查询平台 Cookie 状态（不返回明文）。 */
-  async cookieStatus(platform: string): Promise<{
-    platform: string;
+  async cookieStatus(platform: string): Promise<{    platform: string;
     has_cookie: boolean;
     cookie_count: number;
     valid: boolean;
