@@ -2,6 +2,7 @@ import { ItemView, Modal, Notice, WorkspaceLeaf } from "obsidian";
 import type { CollectionDTO } from "@omni/shared-core";
 import { openManualAIModal } from "./manual-ai.js";
 import { renderRating } from "../markdown/markdown-builder.js";
+import { platformMeta } from "./helpers.js";
 
 export const VIEW_TYPE_OMNI_DETAIL = "omni-collector-detail";
 
@@ -85,7 +86,7 @@ export class OmniCollectionDetailView extends ItemView {
   }
 
   private async renderContent(): Promise<void> {
-    const container = this.containerEl.children[1];
+    const container = this.containerEl.children[1] as HTMLElement;
     container.empty();
     container.addClass("omni-detail");
     if (!this.currentId) {
@@ -97,6 +98,9 @@ export class OmniCollectionDetailView extends ItemView {
       container.createEl("div", { text: "收藏不存在", cls: "omni-empty" });
       return;
     }
+    // 平台色彩识别（外观借鉴 Eagle/Karakeep）：徽标与标题条共用品牌色
+    const pm = platformMeta(item.platform);
+    container.style.setProperty("--omni-platform", pm.color);
 
     // 封面（本地缓存，加速显示）
     if (item.coverUrl) {
@@ -111,7 +115,7 @@ export class OmniCollectionDetailView extends ItemView {
     if (item.contentStatus === "deleted") {
       meta.createEl("span", { text: "失效", cls: "omni-badge omni-badge-deleted" });
     }
-    meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform" });
+    meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform", attr: { style: `--omni-platform:${pm.color};` } });
     meta.createEl("span", { text: item.author ?? "未知作者", cls: "omni-badge" });
     meta.createEl("span", { text: item.contentType === "video" ? "视频" : item.contentType, cls: "omni-badge" });
     meta.createEl("span", { text: new Date(item.collectedAt).toLocaleDateString("zh-CN"), cls: "omni-meta-text" });
@@ -276,13 +280,18 @@ export class OmniCollectionDetailView extends ItemView {
       });
     }
 
-    // 系列 / 分组进度（PRD 24）：自动识别的系列与手动操作入口
+    // 系列 / 分组进度（PRD 24）：自动识别的系列与手动操作入口 + 进度条
     if (item.groupName) {
       const size = item.groupSize ?? (item.related ?? []).length + 1;
       const done = item.groupOrganized ?? 0;
       container.createEl("div", {
         text: `系列「${item.groupName}」：已整理 ${done}/${size}`,
         cls: "omni-section-title",
+      });
+      const bar = container.createEl("div", { cls: "omni-progress" });
+      bar.createEl("div", {
+        cls: "omni-progress-fill",
+        attr: { style: `width:${size > 0 ? Math.round((done / size) * 100) : 0}%;` },
       });
       const seriesBtns = container.createEl("div", { cls: "omni-detail-actions" });
       seriesBtns.createEl("button", { text: "移出系列", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
@@ -304,7 +313,11 @@ export class OmniCollectionDetailView extends ItemView {
       const relatedBox = container.createEl("div", { cls: "omni-detail-related" });
       for (const r of item.related ?? []) {
         const row = relatedBox.createEl("div", { cls: "omni-related-row" });
-        row.createEl("span", { text: PLATFORM_LABELS[r.platform] ?? r.platform, cls: "omni-badge omni-badge-platform" });
+        row.createEl("span", {
+          text: PLATFORM_LABELS[r.platform] ?? r.platform,
+          cls: "omni-badge omni-badge-platform",
+          attr: { style: `--omni-platform:${platformMeta(r.platform).color};` },
+        });
         row.createEl("span", { text: r.title || r.id, cls: "omni-related-title" });
         if (r.reason) row.createEl("span", { text: r.reason, cls: "omni-badge omni-badge-reason" });
         row.addEventListener("click", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterCollections, pickDailyReview } from "../src/ui/helpers.js";
+import { filterCollections, pickDailyReview, PLATFORM_META, platformMeta, VIEW_PRESETS } from "../src/ui/helpers.js";
 import { buildManualTemplate } from "../src/ui/manual-template.js";
 import { buildManualBatchTemplate } from "../src/ui/manual-template.js";
 import type { CollectionDTO } from "@omni/shared-core";
@@ -75,5 +75,26 @@ describe("manual AI templates inject controlled vocabulary (borrowed from Cubox)
   it("batch template omits vocabulary block when absent", () => {
     const tpl = buildManualBatchTemplate([dto({ id: "a" })]);
     expect(tpl).not.toContain("受控词表");
+  });
+});
+
+describe("platform color metadata & smart-view presets (0.9.0 appearance)", () => {
+  it("covers all five platforms with label and brand color", () => {
+    for (const p of ["bilibili", "youtube", "xiaohongshu", "makerworld", "xiaoheihe"]) {
+      const m = PLATFORM_META[p];
+      expect(m, `meta for ${p}`).toBeDefined();
+      expect(m.label.length).toBeGreaterThan(0);
+      expect(m.color).toMatch(/^#/);
+    }
+    expect(platformMeta("unknown")?.label).toBe("unknown");
+  });
+
+  it("view presets have unique keys and valid filter shapes", () => {
+    const keys = VIEW_PRESETS.map((p) => p.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const p of VIEW_PRESETS) {
+      expect(p.label.length).toBeGreaterThan(0);
+      expect(typeof p.filters).toBe("object");
+    }
   });
 });

@@ -1,5 +1,44 @@
 import type { CollectionDTO } from "@omni/shared-core";
 
+/** 平台品牌元数据（外观借鉴 Eagle/Karakeep 的色彩识别收纳）：徽标与卡片强调条共用。 */
+export interface PlatformMeta {
+  label: string;
+  color: string;
+}
+
+export const PLATFORM_META: Record<string, PlatformMeta> = {
+  bilibili: { label: "B站", color: "#fb7299" },
+  youtube: { label: "YouTube", color: "#ff5449" },
+  xiaohongshu: { label: "小红书", color: "#ff2442" },
+  makerworld: { label: "MakerWorld", color: "#2fa84f" },
+  xiaoheihe: { label: "小黑盒", color: "#ff9f43" },
+};
+
+export function platformMeta(platform: string): PlatformMeta {
+  return PLATFORM_META[platform] ?? { label: platform, color: "var(--text-muted)" };
+}
+
+/** 智能视图预设（收纳借鉴 Eagle Smart Folders）：一键切换常用视图。 */
+export interface ViewPreset {
+  key: string;
+  label: string;
+  filters: {
+    status?: CollectionDTO["organizeStatus"];
+    priority?: CollectionDTO["priority"];
+    ratedOnly?: boolean;
+    recentDays?: number;
+  };
+}
+
+export const VIEW_PRESETS: ViewPreset[] = [
+  { key: "all", label: "全部", filters: {} },
+  { key: "unorganized", label: "未整理", filters: { status: "unorganized" } },
+  { key: "recent", label: "本周新增", filters: { recentDays: 7 } },
+  { key: "priority", label: "高优先级", filters: { priority: "important" } },
+  { key: "rated", label: "已评分", filters: { ratedOnly: true } },
+  { key: "watchLater", label: "稍后再看", filters: {} }, // 由列表按 saveType 过滤
+];
+
 export interface CollectionFilter {
   status?: CollectionDTO["organizeStatus"];
   priority?: CollectionDTO["priority"];

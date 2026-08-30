@@ -5362,6 +5362,25 @@ var OmniTagTopicView = class extends import_obsidian5.ItemView {
 var import_obsidian6 = require("obsidian");
 
 // src/ui/helpers.ts
+var PLATFORM_META = {
+  bilibili: { label: "B\u7AD9", color: "#fb7299" },
+  youtube: { label: "YouTube", color: "#ff5449" },
+  xiaohongshu: { label: "\u5C0F\u7EA2\u4E66", color: "#ff2442" },
+  makerworld: { label: "MakerWorld", color: "#2fa84f" },
+  xiaoheihe: { label: "\u5C0F\u9ED1\u76D2", color: "#ff9f43" }
+};
+function platformMeta(platform) {
+  return PLATFORM_META[platform] ?? { label: platform, color: "var(--text-muted)" };
+}
+var VIEW_PRESETS = [
+  { key: "all", label: "\u5168\u90E8", filters: {} },
+  { key: "unorganized", label: "\u672A\u6574\u7406", filters: { status: "unorganized" } },
+  { key: "recent", label: "\u672C\u5468\u65B0\u589E", filters: { recentDays: 7 } },
+  { key: "priority", label: "\u9AD8\u4F18\u5148\u7EA7", filters: { priority: "important" } },
+  { key: "rated", label: "\u5DF2\u8BC4\u5206", filters: { ratedOnly: true } },
+  { key: "watchLater", label: "\u7A0D\u540E\u518D\u770B", filters: {} }
+  // 由列表按 saveType 过滤
+];
 function haystackOf(c) {
   return [c.title, c.author, c.description, c.url, c.groupName, ...c.tags ?? [], ...c.topics ?? []].filter(Boolean).join("\n").toLowerCase();
 }
@@ -5457,6 +5476,9 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     __publicField(this, "platformFilter", null);
     __publicField(this, "searchQuery", "");
     __publicField(this, "sortByRating", false);
+    __publicField(this, "ratedOnly", false);
+    __publicField(this, "recentDays", 0);
+    __publicField(this, "activePreset", "all");
     __publicField(this, "mode", "collections");
     __publicField(this, "viewMode", "list");
     __publicField(this, "coverCache", /* @__PURE__ */ new Map());
@@ -5464,6 +5486,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     __publicField(this, "selected", /* @__PURE__ */ new Set());
     __publicField(this, "listEl");
     __publicField(this, "toolbarEl");
+    __publicField(this, "presetsEl");
     __publicField(this, "batchBarEl");
     __publicField(this, "totalEl");
   }
@@ -5490,6 +5513,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     container.createEl("div", { text: "Omni Collector \u6536\u85CF", cls: "omni-panel-title" });
     this.totalEl = container.createEl("div", { cls: "omni-total" });
     this.toolbarEl = container.createEl("div", { cls: "omni-toolbar" });
+    this.presetsEl = container.createEl("div", { cls: "omni-preset-bar" });
     this.batchBarEl = container.createEl("div", { cls: "omni-batch-bar" });
     this.batchBarEl.addClass("is-hidden");
     this.listEl = container.createEl("div", { cls: "omni-list" });
@@ -5498,6 +5522,11 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
   renderToolbar() {
     const tb = this.toolbarEl;
     tb.empty();
+    const preset = VIEW_PRESETS.find((p) => p.key === this.activePreset);
+    if (preset && (this.statusFilter !== (preset.filters.status ?? "all") || this.priorityFilter !== (preset.filters.priority ?? "all") || this.ratedOnly !== (preset.filters.ratedOnly ?? false) || this.recentDays !== (preset.filters.recentDays ?? 0) || preset.key !== "watchLater" && this.saveTypeFilter !== "all")) {
+      this.activePreset = "";
+    }
+    this.renderPresetBar();
     tb.createEl("button", { text: this.mode === "collections" ? "\u6536\u85CF" : "\u6536\u85CF", cls: `omni-chip${this.mode === "collections" ? " omni-chip-active" : ""}` }).addEventListener("click", () => {
       this.mode = "collections";
       this.renderToolbar();
@@ -5601,6 +5630,36 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
       }
     }
   }
+  renderPresetBar() {
+    if (!this.presetsEl) return;
+    this.presetsEl.empty();
+    if (this.mode !== "collections") {
+      this.presetsEl.addClass("is-hidden");
+      return;
+    }
+    this.presetsEl.removeClass("is-hidden");
+    for (const p of VIEW_PRESETS) {
+      this.presetsEl.createEl("button", { text: p.label, cls: `omni-chip${this.activePreset === p.key ? " omni-chip-active" : ""}` }).addEventListener("click", () => this.applyPreset(p.key));
+    }
+  }
+  applyPreset(key) {
+    const preset = VIEW_PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    this.activePreset = key;
+    this.statusFilter = preset.filters.status ?? "all";
+    this.priorityFilter = preset.filters.priority ?? "all";
+    this.ratedOnly = preset.filters.ratedOnly ?? false;
+    this.recentDays = preset.filters.recentDays ?? 0;
+    this.saveTypeFilter = key === "watchLater" ? "watch_later" : "all";
+    this.renderToolbar();
+    void this.renderList();
+  }
+  platformBadge(parent, platform) {
+    const m = platformMeta(platform);
+    const b = parent.createEl("span", { text: m.label, cls: "omni-badge omni-badge-platform" });
+    b.style.setProperty("--omni-platform", m.color);
+    return b;
+  }
   async refreshList() {
     try {
       this.items = await this.source.list();
@@ -5646,6 +5705,11 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
         return rb - ra || new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime();
       });
     }
+    if (this.ratedOnly) items = items.filter((i) => !!i.rating);
+    if (this.recentDays > 0) {
+      const cutoff = Date.now() - this.recentDays * 864e5;
+      items = items.filter((i) => new Date(i.collectedAt).getTime() >= cutoff);
+    }
     this.totalEl.setText(`\u5171 ${this.items.length} \u6761\u6536\u85CF${this.platformFilter ? `\uFF08${PLATFORMS2.find((p) => p.key === this.platformFilter)?.label ?? this.platformFilter}\uFF09` : ""}\uFF0C\u5F53\u524D\u663E\u793A ${items.length} \u6761`);
     if (items.length === 0) {
       this.listEl.createEl("div", { text: "\u6682\u65E0\u6536\u85CF\uFF08\u5230\u4FA7\u8FB9\u680F\u70B9\u300C\u540C\u6B65\u5168\u90E8\u5E73\u53F0\u300D\uFF09", cls: "omni-empty" });
@@ -5654,7 +5718,10 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     if (this.viewMode === "card") {
       const grid = this.listEl.createEl("div", { cls: "omni-card-grid" });
       for (const item of items) {
+        const m = platformMeta(item.platform);
         const card = grid.createEl("div", { cls: "omni-card" });
+        card.style.setProperty("--omni-platform", m.color);
+        if (item.contentStatus === "deleted") card.addClass("omni-card-deleted");
         const imgBox = card.createEl("div", { cls: "omni-card-cover-wrap" });
         if (item.coverUrl) {
           imgBox.createEl("img", { cls: "omni-card-cover", attr: { referrerpolicy: "no-referrer", loading: "lazy" } });
@@ -5663,13 +5730,19 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
             if (img && src) img.setAttribute("src", src);
           });
         } else {
-          imgBox.createEl("div", { cls: "omni-card-cover omni-card-cover-empty" });
+          imgBox.createEl("div", { cls: "omni-card-cover omni-card-cover-empty" }).createEl("span", { text: m.label });
         }
+        const flags = imgBox.createEl("div", { cls: "omni-card-flags" });
+        if (item.contentStatus === "deleted") flags.createEl("span", { text: "\u5931\u6548", cls: "omni-flag omni-flag-danger" });
+        else if (item.organizeStatus === "archived") flags.createEl("span", { text: "\u5DF2\u5F52\u6863", cls: "omni-flag" });
+        else if (item.organizeStatus === "unorganized") flags.createEl("span", { text: "\u5F85\u6574\u7406", cls: "omni-flag omni-flag-warn" });
+        if (item.saveType === "watch_later") flags.createEl("span", { text: "\u7A0D\u540E", cls: "omni-flag omni-flag-info" });
+        if (item.rating) flags.createEl("span", { text: `\u2605${item.rating}`, cls: "omni-flag omni-flag-star" });
         card.createEl("div", { text: item.title || item.platformItemId, cls: "omni-card-title" });
         const meta = card.createEl("div", { cls: "omni-row-meta" });
-        meta.createEl("span", { text: PLATFORMS2.find((p) => p.key === item.platform)?.label ?? item.platform, cls: "omni-badge omni-badge-platform" });
+        this.platformBadge(meta, item.platform);
         meta.createEl("span", { text: item.saveType === "liked" ? "\u70B9\u8D5E" : item.saveType === "watch_later" ? "\u7A0D\u540E\u518D\u770B" : "\u6536\u85CF", cls: "omni-badge" });
-        if (item.rating) meta.createEl("span", { text: `\u2605${item.rating}`, cls: "omni-badge omni-badge-rating" });
+        if (item.groupName) meta.createEl("span", { text: `\u7EC4:${item.groupName}`, cls: "omni-badge omni-badge-group" });
         card.addEventListener("click", () => this.source.onOpenDetail(item.id));
       }
       return;
@@ -5689,7 +5762,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
       main.createEl("a", { text: item.title || item.platformItemId, href: item.url, cls: "omni-title" });
       main.addEventListener("click", () => this.source.onOpenDetail(item.id));
       const meta = main.createEl("div", { cls: "omni-row-meta" });
-      meta.createEl("span", { text: PLATFORMS2.find((p) => p.key === item.platform)?.label ?? item.platform, cls: "omni-badge omni-badge-platform" });
+      this.platformBadge(meta, item.platform);
       meta.createEl("span", { text: item.saveType === "liked" ? "\u70B9\u8D5E" : item.saveType === "watch_later" ? "\u7A0D\u540E\u518D\u770B" : "\u6536\u85CF", cls: "omni-badge" });
       if (item.contentStatus === "deleted") {
         meta.createEl("span", { text: "\u5931\u6548", cls: "omni-badge omni-badge-deleted" });
@@ -6235,6 +6308,8 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
       container.createEl("div", { text: "\u6536\u85CF\u4E0D\u5B58\u5728", cls: "omni-empty" });
       return;
     }
+    const pm = platformMeta(item.platform);
+    container.style.setProperty("--omni-platform", pm.color);
     if (item.coverUrl) {
       const img = container.createEl("img", { cls: "omni-detail-cover", attr: { referrerpolicy: "no-referrer" } });
       void this.source.ensureCover(item.coverUrl).then((src) => {
@@ -6246,7 +6321,7 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
     if (item.contentStatus === "deleted") {
       meta.createEl("span", { text: "\u5931\u6548", cls: "omni-badge omni-badge-deleted" });
     }
-    meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform" });
+    meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform", attr: { style: `--omni-platform:${pm.color};` } });
     meta.createEl("span", { text: item.author ?? "\u672A\u77E5\u4F5C\u8005", cls: "omni-badge" });
     meta.createEl("span", { text: item.contentType === "video" ? "\u89C6\u9891" : item.contentType, cls: "omni-badge" });
     meta.createEl("span", { text: new Date(item.collectedAt).toLocaleDateString("zh-CN"), cls: "omni-meta-text" });
@@ -6389,6 +6464,11 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
         text: `\u7CFB\u5217\u300C${item.groupName}\u300D\uFF1A\u5DF2\u6574\u7406 ${done}/${size}`,
         cls: "omni-section-title"
       });
+      const bar = container.createEl("div", { cls: "omni-progress" });
+      bar.createEl("div", {
+        cls: "omni-progress-fill",
+        attr: { style: `width:${size > 0 ? Math.round(done / size * 100) : 0}%;` }
+      });
       const seriesBtns = container.createEl("div", { cls: "omni-detail-actions" });
       seriesBtns.createEl("button", { text: "\u79FB\u51FA\u7CFB\u5217", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
         void this.source.onGroupLeave(item.id).then(() => this.renderContent()).catch((e) => new import_obsidian8.Notice(`\u79FB\u51FA\u5931\u8D25\uFF1A${e.message}`));
@@ -6404,7 +6484,11 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
       const relatedBox = container.createEl("div", { cls: "omni-detail-related" });
       for (const r of item.related ?? []) {
         const row = relatedBox.createEl("div", { cls: "omni-related-row" });
-        row.createEl("span", { text: PLATFORM_LABELS[r.platform] ?? r.platform, cls: "omni-badge omni-badge-platform" });
+        row.createEl("span", {
+          text: PLATFORM_LABELS[r.platform] ?? r.platform,
+          cls: "omni-badge omni-badge-platform",
+          attr: { style: `--omni-platform:${platformMeta(r.platform).color};` }
+        });
         row.createEl("span", { text: r.title || r.id, cls: "omni-related-title" });
         if (r.reason) row.createEl("span", { text: r.reason, cls: "omni-badge omni-badge-reason" });
         row.addEventListener("click", () => {

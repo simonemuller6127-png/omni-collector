@@ -600,3 +600,111 @@
   background: var(--background-primary);
   font-size: 0.88em;
 }
+
+/* ===== 收纳与外观升级（0.9.0，借鉴 Eagle/Karakeep，遵循 Obsidian 主题变量） ===== */
+
+/* 智能视图预设条（Eagle Smart Folders 式一键视图） */
+.omni-preset-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.omni-preset-bar.is-hidden {
+  display: none;
+}
+
+/* 平台品牌色识别：徽标着色（--omni-platform 由元素内联注入） */
+.omni-badge-platform {
+  color: var(--omni-platform, var(--text-on-accent));
+  background: color-mix(in srgb, var(--omni-platform, var(--interactive-accent)) 16%, transparent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* 卡片视图：16:9 封面、平台强调条、悬浮抬升 */
+.omni-card {
+  border-top: 2px solid var(--omni-platform, transparent);
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+.omni-card:hover {
+  border-color: var(--omni-platform, var(--interactive-accent));
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-s);
+}
+.omni-card-deleted {
+  opacity: 0.55;
+}
+.omni-card-cover-wrap {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--background-secondary);
+}
+.omni-card-cover {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.omni-card-cover-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: var(--omni-platform, var(--text-faint));
+  background: color-mix(in srgb, var(--omni-platform, var(--background-modifier-border)) 14%, var(--background-secondary));
+}
+
+/* 封面覆盖式状态角标：一眼速览整理状态 / 类型 / 评分 */
+.omni-card-flags {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  pointer-events: none;
+}
+.omni-flag {
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 0.72em;
+  line-height: 1.6;
+  padding: 0 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.omni-flag-warn {
+  background: rgba(255, 179, 0, 0.92);
+  color: #241a00;
+}
+.omni-flag-danger {
+  background: var(--text-error, #e35555);
+}
+.omni-flag-info {
+  background: rgba(100, 181, 246, 0.92);
+  color: #0d2233;
+}
+.omni-flag-star {
+  background: rgba(255, 213, 79, 0.92);
+  color: #4a3600;
+}
+
+/* 系列进度条（详情页） */
+.omni-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+  margin: 6px 0 10px;
+}
+.omni-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--interactive-accent);
+  transition: width 0.2s ease;
+}

@@ -2,7 +2,7 @@
 
 > 比对基准：`Omni_Collector_PRD_v4.2_最终版.docx` 第二十八章《功能需求全量清单 v4.1》、第二十九章《产品验收标准》，以及 SPEC v3.3 分阶段路线（V1.0 → V1.5 → V2.0 → V3.0）。
 > 状态口径：✅ 已实现并测试覆盖 · 🟡 部分实现/有替代路径 · ❌ 未实现（多属 V3.0 范围）。
-> 最近更新：0.8.0（市面工具借鉴轮：关键字检索 / 今日回顾 / 复制链接 / Manual AI 受控词表）。
+> 最近更新：0.9.0（收纳与外观轮：智能视图预设 / 卡片视图重设计 / 平台品牌色识别 / 系列进度条，遵循 Obsidian CSS 变量规范）。
 
 ## 一、V1.0 Foundation（P0）
 
@@ -80,3 +80,4 @@
 | cccbfbe | 超期提醒统计（规则驱动）+ user_feedback 用户行为事件采集（PRD 18.1/21.1） |
 | 8365799 | 系列手动管理（加入/移出/整组并入 + 系列进度，PRD 24）+ Topic 合并（PRD 17）+ 文件哈希追踪与丢失恢复（PRD 9.7）+ Markdown 增强 TOC 分析（PRD 9.4）+ 修复重扫清空关联的仓储缺陷 |
 | 0.8.0 | 市面工具借鉴轮（保持插件/本地优先形态）：关键字检索与批量复制链接（借鉴 [Karakeep](https://karakeep.app/) / Eagle 类工具）；今日回顾随机重现（借鉴 [Readwise Daily Review](https://docs.readwise.io/readwise/docs/faqs/reviewing-highlights)）；Manual AI 模板注入受控词表（借鉴 [Cubox](https://help.cubox.pro/) 智能标签体系）——均为本地实现，不引入服务端依赖 |
+| 0.9.0 | 收纳与外观轮：智能视图预设条（借鉴 [Eagle Smart Folders](https://en.eagle.cool/)）；卡片视图重设计——16:9 封面、平台强调条、悬浮抬升、覆盖式状态角标；平台品牌色识别（B站/YouTube/小红书/MakerWorld/小黑盒）；详情页系列进度条；全部遵循 [Obsidian CSS 变量](https://docs.obsidian.md/Reference/CSS+variables/CSS+variables)自动适配明暗主题 |

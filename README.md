@@ -31,6 +31,8 @@ Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and l
 ### 本地知识管理
 
 - 收藏列表：纯文字 / 卡片缩略图双视图，平台 / 类型 / 状态 / 优先级过滤，关键字检索（标题/作者/简介/Tag/Topic/分组），批量复制所选链接
+- **智能视图**（借鉴 Eagle Smart Folders）：全部 / 未整理 / 本周新增 / 高优先级 / 已评分 / 稍后再看 一键切换
+- **外观**：卡片 16:9 封面 + 悬浮抬升 + 覆盖式状态角标（待整理/已归档/失效/稍后/评分），平台品牌色识别（B站/YouTube/小红书/MakerWorld/小黑盒），遵循 Obsidian 主题变量自适应明暗主题
 - 内容预览：B站 / YouTube 官方嵌入播放器、正文按需抓取（不落盘）、评论展示
 - 整理工作流：未整理 → 已查看 → 已整理 → 已归档；优先级（普通/重要/项目/知识）
 - 手动评分 1~5 星（PRD 29.2）与精选评论（PRD 7.3）：操作物化进 Markdown 用户区，SQLite 同步副本，列表支持按评分排序
