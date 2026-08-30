@@ -18,6 +18,16 @@ export function sanitizeFilename(name: string): string {
   return (name || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** 评分展示（PRD 29.2：1~5 星，用户区）。 */
+export function renderRating(rating?: number | null): string {
+  const n = Math.max(0, Math.min(5, Math.round(rating ?? 0)));
+  return n === 0 ? "" : `${"★".repeat(n)}${"☆".repeat(5 - n)}（${n}/5）`;
+}
+
 /**
  * Markdown 区域隔离协议（TDD Part 8，SPEC S7 冻结）：
  * 系统区由 Plugin 依据 Engine DTO 生成；用户区任何自动化逻辑禁止修改（ADR-011/ADR-006）。
@@ -31,6 +41,11 @@ export class MarkdownBuilder {
       `sync_status: ${yamlString(dto.syncStatus)}`,
     ].join('\n');
     const comments = (dto.comments ?? []).map((c) => `- **${c.author}**：${c.content}`).join('\n');
+    const starred = (dto.comments ?? [])
+      .filter((c) => c.starred)
+      .map((c) => `- **${c.author}**：${c.content}`)
+      .join('\n');
+    const ratingText = renderRating(dto.rating);
     const frontmatter = this.buildFrontmatter(dto);
     const graphLinks = this.buildGraphLinks(dto);
     return [
@@ -56,10 +71,8 @@ export class MarkdownBuilder {
       '<!-- 以下为用户私有编辑区，任何自动化逻辑禁止修改 -->',
       '## 我的笔记',
       '',
-      '## 精选评论',
-      '',
-      '## 评分与优先级',
-      '',
+      ...(starred ? ['## 精选评论', '', starred, ''] : ['## 精选评论', '']),
+      ...(ratingText ? ['## 评分与优先级', '', ratingText, ''] : ['## 评分与优先级', '']),
     ].join('\n');
   }
 
@@ -177,6 +190,25 @@ export class MarkdownBuilder {
       links,
       "",
     ].join("\n");
+  }
+
+  /**
+   * 替换用户区指定小节的内容（仅系统区标记之后）。
+   * 仅用于物化用户在插件 UI 的显式操作（评分 PRD 29.2 / 精选评论 PRD 7.3），
+   * 等同用户本人编辑，不属于自动化覆盖。
+   */
+  replaceUserZoneSection(md: string, headerKeyword: string, content: string): string | null {
+    if (!this.validateMarkers(md)) return null;
+    const markerIdx = md.indexOf(SYSTEM_END) + SYSTEM_END.length;
+    const head = md.slice(0, markerIdx);
+    const tail = md.slice(markerIdx);
+    const re = new RegExp(
+      `(^##\\s+.*${escapeRegExp(headerKeyword)}.*\\n)([\\s\\S]*?)(?=^##\\s|^#\\s|(?![\\s\\S]))`,
+      "m",
+    );
+    if (!re.test(tail)) return null;
+    const body = content.trim() ? `${content.trim()}\n\n` : "\n";
+    return head + tail.replace(re, `$1${body}`);
   }
 
   extractUserZone(md: string): UserZone {

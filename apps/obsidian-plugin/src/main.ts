@@ -10,7 +10,7 @@ import { OmniAiReviewView, VIEW_TYPE_OMNI_AI, type AiReviewSource } from "./ui/a
 import { OmniTagTopicView, VIEW_TYPE_OMNI_TAGS, type TagTopicSource } from "./ui/tag-topic.js";
 import { OmniCollectionListView, VIEW_TYPE_OMNI_LIST, type ListDataSource } from "./ui/collection-list.js";
 import { OmniCollectionDetailView, VIEW_TYPE_OMNI_DETAIL, type DetailDataSource } from "./ui/collection-detail.js";
-import { MarkdownBuilder, sanitizeFilename } from "./markdown/markdown-builder.js";
+import { MarkdownBuilder, sanitizeFilename, renderRating } from "./markdown/markdown-builder.js";
 import { openManualAIModal } from "./ui/manual-ai.js";
 import { openManualAIBatchModal } from "./ui/manual-ai-batch.js";
 import { dailyCapReached, isSyncDue } from "./sync/sync-scheduler.js";
@@ -63,6 +63,7 @@ export default class OmniCollectorPlugin extends Plugin {
         onTopic: (id, topic) => this.engine.addTopic(id, topic).then(() => undefined),
         onPriority: (id, priority) => this.engine.setPriority(id, priority).then(() => undefined),
         onConvert: (id, to) => this.engine.convertCollection(id, to).then(() => undefined),
+        onRating: (id, rating) => this.engine.setRating(id, rating).then(() => undefined),
         ensureCover: (url) => this.ensureCover(url),
         openLocalFile: (filePath) => {
           const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -79,6 +80,18 @@ export default class OmniCollectorPlugin extends Plugin {
         onPriority: (id, p) => this.engine.setPriority(id, p).then(() => undefined),
         onTag: (id, t) => this.engine.addTag(id, t).then(() => undefined),
         onTopic: (id, t) => this.engine.addTopic(id, t).then(() => undefined),
+        onRating: (id, rating) => this.engine.setRating(id, rating).then(() => undefined),
+        onStarComment: (id, commentId, starred) => this.engine.starComment(id, commentId, starred).then(() => undefined),
+        materializeRating: (dto, rating) => this.writeUserZoneSection(dto, "评分", renderRating(rating)),
+        materializeStarredComments: (dto) =>
+          this.writeUserZoneSection(
+            dto,
+            "精选评论",
+            (dto.comments ?? [])
+              .filter((c) => c.starred)
+              .map((c) => `- **${c.author}**：${c.content}`)
+              .join("\n"),
+          ),
         openLocalFile: (filePath) => {
           const file = this.app.vault.getAbstractFileByPath(filePath);
           if (file) void this.app.workspace.getLeaf(false).openFile(file as import("obsidian").TFile);
@@ -533,6 +546,29 @@ export default class OmniCollectorPlugin extends Plugin {
       }
     }
     new Notice(`Omni Collector: 已生成/更新 ${count} 个 Markdown`);
+  }
+
+  /** 计算收藏 Markdown 路径（与 generateCollectionMarkdown 命名一致）。 */
+  private collectionMarkdownPath(dto: CollectionDTO): string {
+    const safeTitle = (dto.title || dto.platformItemId).replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
+    return `Omni Collector/${dto.platform}/${safeTitle}.md`;
+  }
+
+  /**
+   * 把用户在 UI 的显式操作物化进 Markdown 用户区（评分/精选评论，ADR-006：用户区为权威）。
+   * 文件尚未生成时跳过——之后 generateCollectionMarkdown 按 DTO 建档时会带上最新值。
+   */
+  private async writeUserZoneSection(dto: CollectionDTO, headerKeyword: string, content: string): Promise<void> {
+    const filePath = this.collectionMarkdownPath(dto);
+    const vault = this.app.vault;
+    try {
+      if (!(await vault.adapter.exists(filePath))) return;
+      const existing = await vault.adapter.read(filePath);
+      const next = new MarkdownBuilder().replaceUserZoneSection(existing, headerKeyword, content);
+      if (next !== null && next !== existing) await vault.adapter.write(filePath, next);
+    } catch {
+      // 用户区物化失败不阻断操作（SQLite 同步副本已写入）
+    }
   }
 
   private async openCollectionList(platform?: string): Promise<void> {

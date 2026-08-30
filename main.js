@@ -4131,6 +4131,8 @@ var MESSAGE_TYPES = [
   "TASK_TAG",
   "TASK_TOPIC",
   "TASK_PRIORITY",
+  "TASK_RATING",
+  "TASK_COMMENT_STAR",
   "TASK_INDEX",
   "TASK_FETCH",
   "TASK_CONVERT",
@@ -4168,6 +4170,8 @@ var REQUIRED_PAYLOAD_FIELDS = {
   TASK_TAG: ["collection_id", "tag"],
   TASK_TOPIC: ["collection_id", "topic"],
   TASK_PRIORITY: ["collection_id", "priority"],
+  TASK_RATING: ["collection_id", "rating"],
+  TASK_COMMENT_STAR: ["collection_id", "comment_id", "starred"],
   TASK_INDEX: ["folder"],
   TASK_FETCH: ["url"],
   TASK_CONVERT: ["collection_id", "to"],
@@ -4604,6 +4608,24 @@ var EngineClient = class {
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       message_type: "TASK_PRIORITY",
       payload: { collection_id: collectionId, priority }
+    });
+  }
+  /** 用户手动评分 1~5 星（PRD 29.2）；rating=0 清除。 */
+  async setRating(collectionId, rating) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_RATING",
+      payload: { collection_id: collectionId, rating }
+    });
+  }
+  /** 用户精选评论（PRD 7.3）：切换 is_starred 同步副本。 */
+  async starComment(collectionId, commentId, starred) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_COMMENT_STAR",
+      payload: { collection_id: collectionId, comment_id: commentId, starred }
     });
   }
   /** 扫描本地文件夹（Markdown/PDF）并关联收藏。 */
@@ -5321,6 +5343,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     __publicField(this, "saveTypeFilter", "all");
     __publicField(this, "priorityFilter", "all");
     __publicField(this, "platformFilter", null);
+    __publicField(this, "sortByRating", false);
     __publicField(this, "mode", "collections");
     __publicField(this, "viewMode", "list");
     __publicField(this, "coverCache", /* @__PURE__ */ new Map());
@@ -5427,6 +5450,12 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
           void this.renderList();
         });
       }
+      tb.createEl("span", { text: "\uFF5C", cls: "omni-toolbar-sep" });
+      tb.createEl("button", { text: "\u6309\u8BC4\u5206\u6392\u5E8F", cls: `omni-chip${this.sortByRating ? " omni-chip-active" : ""}` }).addEventListener("click", () => {
+        this.sortByRating = !this.sortByRating;
+        this.renderToolbar();
+        void this.renderList();
+      });
     }
     tb.createEl("button", { text: "\u5237\u65B0", cls: "omni-chip omni-chip-refresh" }).addEventListener("click", () => {
       void this.refreshList();
@@ -5485,6 +5514,13 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== "all") items = items.filter((i) => i.saveType === this.saveTypeFilter);
+    if (this.sortByRating) {
+      items = [...items].sort((a, b) => {
+        const ra = a.rating ?? 0;
+        const rb = b.rating ?? 0;
+        return rb - ra || new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime();
+      });
+    }
     this.totalEl.setText(`\u5171 ${this.items.length} \u6761\u6536\u85CF${this.platformFilter ? `\uFF08${PLATFORMS2.find((p) => p.key === this.platformFilter)?.label ?? this.platformFilter}\uFF09` : ""}\uFF0C\u5F53\u524D\u663E\u793A ${items.length} \u6761`);
     if (items.length === 0) {
       this.listEl.createEl("div", { text: "\u6682\u65E0\u6536\u85CF\uFF08\u5230\u4FA7\u8FB9\u680F\u70B9\u300C\u540C\u6B65\u5168\u90E8\u5E73\u53F0\u300D\uFF09", cls: "omni-empty" });
@@ -5508,6 +5544,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
         const meta = card.createEl("div", { cls: "omni-row-meta" });
         meta.createEl("span", { text: PLATFORMS2.find((p) => p.key === item.platform)?.label ?? item.platform, cls: "omni-badge omni-badge-platform" });
         meta.createEl("span", { text: item.saveType === "liked" ? "\u70B9\u8D5E" : item.saveType === "watch_later" ? "\u7A0D\u540E\u518D\u770B" : "\u6536\u85CF", cls: "omni-badge" });
+        if (item.rating) meta.createEl("span", { text: `\u2605${item.rating}`, cls: "omni-badge omni-badge-rating" });
         card.addEventListener("click", () => this.source.onOpenDetail(item.id));
       }
       return;
@@ -5534,6 +5571,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
         row.addClass("omni-row-deleted");
       }
       meta.createEl("span", { text: PRIORITIES.find((p) => p.key === item.priority)?.label ?? item.priority, cls: "omni-badge omni-badge-priority" });
+      if (item.rating) meta.createEl("span", { text: `\u2605${item.rating}`, cls: "omni-badge omni-badge-rating" });
       if (item.groupName) meta.createEl("span", { text: `\u7EC4:${item.groupName}`, cls: "omni-badge omni-badge-group" });
       for (const t of item.tags ?? []) meta.createEl("span", { text: `#${t}`, cls: "omni-badge omni-badge-tag" });
       for (const t of item.topics ?? []) meta.createEl("span", { text: `\u25CE${t}`, cls: "omni-badge omni-badge-topic" });
@@ -5727,6 +5765,207 @@ function openManualAIModal(app, item, source) {
   modal.open();
 }
 
+// src/markdown/markdown-builder.ts
+var SYSTEM_START = "<!-- OMNI_SYSTEM_START -->";
+var SYSTEM_END = "<!-- OMNI_SYSTEM_END -->";
+function yamlString(v) {
+  return JSON.stringify(String(v ?? ""));
+}
+function escapeTitleHash(title) {
+  return (title ?? "").replace(/#/g, "\\#");
+}
+function sanitizeFilename(name) {
+  return (name || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
+}
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function renderRating(rating) {
+  const n = Math.max(0, Math.min(5, Math.round(rating ?? 0)));
+  return n === 0 ? "" : `${"\u2605".repeat(n)}${"\u2606".repeat(5 - n)}\uFF08${n}/5\uFF09`;
+}
+var MarkdownBuilder = class {
+  buildFromDTO(dto) {
+    const system = [
+      `title: ${yamlString(dto.title)}`,
+      `platform: ${yamlString(dto.platform)}`,
+      `url: ${yamlString(dto.url)}`,
+      `sync_status: ${yamlString(dto.syncStatus)}`
+    ].join("\n");
+    const comments = (dto.comments ?? []).map((c) => `- **${c.author}**\uFF1A${c.content}`).join("\n");
+    const starred = (dto.comments ?? []).filter((c) => c.starred).map((c) => `- **${c.author}**\uFF1A${c.content}`).join("\n");
+    const ratingText = renderRating(dto.rating);
+    const frontmatter = this.buildFrontmatter(dto);
+    const graphLinks = this.buildGraphLinks(dto);
+    return [
+      frontmatter,
+      "---",
+      "# Omni Collector System Zone",
+      SYSTEM_START,
+      system,
+      SYSTEM_END,
+      "---",
+      "",
+      `# ${escapeTitleHash(dto.title)}`,
+      "",
+      ...graphLinks ? ["## \u5173\u8054", "", graphLinks, ""] : [],
+      ...dto.coverUrl ? [`![cover](${dto.coverUrl})`, ""] : [],
+      ...dto.author ? [`\u4F5C\u8005\uFF1A${dto.author}`, ""] : [],
+      ...dto.description ? ["## \u7B80\u4ECB", "", dto.description, ""] : [],
+      ...comments ? ["## \u8BC4\u8BBA", "", comments, ""] : [],
+      "## \u6574\u7406\u4E0E\u4F18\u5148\u7EA7",
+      "",
+      `\u4F18\u5148\u7EA7\uFF1A${dto.priority} / \u6574\u7406\u72B6\u6001\uFF1A${dto.organizeStatus}`,
+      "",
+      "<!-- \u4EE5\u4E0B\u4E3A\u7528\u6237\u79C1\u6709\u7F16\u8F91\u533A\uFF0C\u4EFB\u4F55\u81EA\u52A8\u5316\u903B\u8F91\u7981\u6B62\u4FEE\u6539 -->",
+      "## \u6211\u7684\u7B14\u8BB0",
+      "",
+      ...starred ? ["## \u7CBE\u9009\u8BC4\u8BBA", "", starred, ""] : ["## \u7CBE\u9009\u8BC4\u8BBA", ""],
+      ...ratingText ? ["## \u8BC4\u5206\u4E0E\u4F18\u5148\u7EA7", "", ratingText, ""] : ["## \u8BC4\u5206\u4E0E\u4F18\u5148\u7EA7", ""]
+    ].join("\n");
+  }
+  buildFrontmatter(dto) {
+    const tags = JSON.stringify(dto.tags ?? []);
+    const topics = JSON.stringify(dto.topics ?? []);
+    return [
+      "---",
+      `platform: ${yamlString(dto.platform)}`,
+      `url: ${yamlString(dto.url)}`,
+      `priority: ${yamlString(dto.priority)}`,
+      `organize_status: ${yamlString(dto.organizeStatus)}`,
+      `tags: ${tags}`,
+      `topics: ${topics}`,
+      "---"
+    ].join("\n");
+  }
+  validateMarkers(md) {
+    const start = md.indexOf(SYSTEM_START);
+    const end = md.indexOf(SYSTEM_END);
+    return start >= 0 && end > start;
+  }
+  replaceSystemZone(md, dto) {
+    if (!this.validateMarkers(md)) {
+      throw new Error("PLUGIN_002: system zone markers missing or misordered");
+    }
+    const system = [
+      `title: ${yamlString(dto.title)}`,
+      `platform: ${yamlString(dto.platform)}`,
+      `url: ${yamlString(dto.url)}`,
+      `sync_status: ${yamlString(dto.syncStatus)}`
+    ].join("\n");
+    let out = md.replace(
+      new RegExp(`${SYSTEM_START}[\\s\\S]*?${SYSTEM_END}`),
+      `${SYSTEM_START}
+${system}
+${SYSTEM_END}`
+    );
+    const newFrontmatter = this.buildFrontmatter(dto);
+    if (/^---\n[\s\S]*?\n---\n/.test(out)) {
+      out = out.replace(/^---\n[\s\S]*?\n---\n/, `${newFrontmatter}
+`);
+    } else {
+      out = `${newFrontmatter}
+${out}`;
+    }
+    const markerIdx = out.indexOf(SYSTEM_END);
+    if (markerIdx >= 0) {
+      const head = out.slice(0, markerIdx + SYSTEM_END.length);
+      let tail = out.slice(markerIdx + SYSTEM_END.length);
+      tail = tail.replace(/^# .*$/m, `# ${escapeTitleHash(dto.title)}`);
+      const links = this.buildGraphLinks(dto);
+      const sectionRe = /^## 关联\s*$[\s\S]*?(?=^## |^# |\Z)/m;
+      if (links) {
+        tail = tail.replace(sectionRe, `## \u5173\u8054
+
+${links}
+
+`);
+      } else {
+        tail = tail.replace(sectionRe, "");
+      }
+      out = head + tail;
+    }
+    return out;
+  }
+  buildGraphLinks(dto) {
+    const topicLinks = (dto.topics ?? []).map((t) => `- [[Omni Collector/Topics/${sanitizeFilename(t)}]]`).join("\n");
+    const tagLinks = (dto.tags ?? []).map((t) => `- [[Omni Collector/Tags/${sanitizeFilename(t)}]]`).join("\n");
+    return [topicLinks, tagLinks].filter(Boolean).join("\n");
+  }
+  /** Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。 */
+  buildTopicHub(topicName, noteLinks) {
+    const name = (topicName || "\u672A\u547D\u540D\u4E3B\u9898").trim();
+    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
+    return [
+      "---",
+      `topic: ${yamlString(name)}`,
+      `tags: ["topic/${sanitizeFilename(name)}"]`,
+      "---",
+      "",
+      `# ${name}`,
+      "",
+      "> \u4E3B\u9898\u805A\u5408\u9875\uFF08Omni Collector \u81EA\u52A8\u751F\u6210\uFF0C\u4FEE\u6539\u4F1A\u88AB\u8986\u76D6\uFF09",
+      "",
+      "## \u6536\u85CF",
+      "",
+      links,
+      ""
+    ].join("\n");
+  }
+  /** Tag 聚合页（PRD 16 / 关系图谱联动）：主 Tag 节点 + 成员笔记 wikilink。 */
+  buildTagHub(tagName, noteLinks) {
+    const name = (tagName || "\u672A\u547D\u540D\u6807\u7B7E").trim();
+    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
+    return [
+      "---",
+      `tags: ["${sanitizeFilename(name)}"]`,
+      "---",
+      "",
+      `# ${name}`,
+      "",
+      "> \u6807\u7B7E\u805A\u5408\u9875\uFF08Omni Collector \u81EA\u52A8\u751F\u6210\uFF0C\u4FEE\u6539\u4F1A\u88AB\u8986\u76D6\uFF09",
+      "",
+      "## \u6536\u85CF",
+      "",
+      links,
+      ""
+    ].join("\n");
+  }
+  /**
+   * 替换用户区指定小节的内容（仅系统区标记之后）。
+   * 仅用于物化用户在插件 UI 的显式操作（评分 PRD 29.2 / 精选评论 PRD 7.3），
+   * 等同用户本人编辑，不属于自动化覆盖。
+   */
+  replaceUserZoneSection(md, headerKeyword, content) {
+    if (!this.validateMarkers(md)) return null;
+    const markerIdx = md.indexOf(SYSTEM_END) + SYSTEM_END.length;
+    const head = md.slice(0, markerIdx);
+    const tail = md.slice(markerIdx);
+    const re = new RegExp(
+      `(^##\\s+.*${escapeRegExp(headerKeyword)}.*\\n)([\\s\\S]*?)(?=^##\\s|^#\\s|(?![\\s\\S]))`,
+      "m"
+    );
+    if (!re.test(tail)) return null;
+    const body = content.trim() ? `${content.trim()}
+
+` : "\n";
+    return head + tail.replace(re, `$1${body}`);
+  }
+  extractUserZone(md) {
+    const zone = {};
+    const sections = md.split(/^##\s+/m);
+    for (const section of sections.slice(1)) {
+      const [header, ...body] = section.split("\n");
+      const content = body.join("\n").trim();
+      if (header.includes("\u6211\u7684\u7B14\u8BB0")) zone.note = content;
+      else if (header.includes("\u7CBE\u9009\u8BC4\u8BBA")) zone.starredComments = content;
+      else if (header.includes("\u8BC4\u5206")) zone.rating = content;
+      else if (header.includes("\u4F18\u5148\u7EA7")) zone.priority = content;
+    }
+    return zone;
+  }
+};
+
 // src/ui/collection-detail.ts
 var VIEW_TYPE_OMNI_DETAIL = "omni-collector-detail";
 var PLATFORM_LABELS = {
@@ -5862,10 +6101,54 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
       container.createEl("div", { text: "\u8BC4\u8BBA", cls: "omni-section-title" });
       const comments = container.createEl("div", { cls: "omni-detail-comments" });
       for (const c of item.comments ?? []) {
-        const row = comments.createEl("div", { cls: "omni-comment" });
+        const row = comments.createEl("div", { cls: `omni-comment${c.starred ? " omni-comment-starred" : ""}` });
         row.createEl("span", { text: c.author, cls: "omni-comment-author" });
         row.createEl("span", { text: c.content, cls: "omni-comment-content" });
+        if (c.id) {
+          const starBtn = row.createEl("button", {
+            text: c.starred ? "\u2605" : "\u2606",
+            cls: `omni-star${c.starred ? " omni-star-on" : ""}`,
+            attr: { title: c.starred ? "\u53D6\u6D88\u7CBE\u9009" : "\u7CBE\u9009\u6B64\u8BC4\u8BBA" }
+          });
+          starBtn.addEventListener("click", () => {
+            const next = !c.starred;
+            void this.source.onStarComment(item.id, c.id, next).then(() => {
+              c.starred = next;
+              row.toggleClass("omni-comment-starred", next);
+              starBtn.setText(next ? "\u2605" : "\u2606");
+              starBtn.toggleClass("omni-star-on", next);
+              return this.source.materializeStarredComments(item);
+            }).catch((e) => new import_obsidian8.Notice(`\u7CBE\u9009\u8BC4\u8BBA\u5931\u8D25\uFF1A${e.message}`));
+          });
+        }
       }
+    }
+    const ratingBox = container.createEl("div", { cls: "omni-detail-rating" });
+    ratingBox.createEl("span", { text: "\u6211\u7684\u8BC4\u5206", cls: "omni-section-title" });
+    const starsRow = ratingBox.createEl("div", { cls: "omni-rating-stars" });
+    let current = item.rating ?? 0;
+    const ratingLabel = starsRow.createEl("span", { text: current > 0 ? renderRating(current) : "\u672A\u8BC4\u5206", cls: "omni-rating-label" });
+    const starBtns = [];
+    for (let i = 1; i <= 5; i += 1) {
+      const star = starsRow.createEl("button", {
+        text: i <= current ? "\u2605" : "\u2606",
+        cls: `omni-star${i <= current ? " omni-star-on" : ""}`,
+        attr: { title: `${i} \u661F` }
+      });
+      starBtns.push(star);
+      star.addEventListener("click", () => {
+        const next = i === current ? 0 : i;
+        void this.source.onRating(item.id, next).then(() => {
+          current = next;
+          item.rating = next || null;
+          ratingLabel.setText(next > 0 ? renderRating(next) : "\u672A\u8BC4\u5206");
+          for (let j = 1; j <= 5; j += 1) {
+            starBtns[j - 1].setText(j <= next ? "\u2605" : "\u2606");
+            starBtns[j - 1].toggleClass("omni-star-on", j <= next);
+          }
+          return this.source.materializeRating(item, next);
+        }).catch((e) => new import_obsidian8.Notice(`\u8BC4\u5206\u5931\u8D25\uFF1A${e.message}`));
+      });
     }
     if ((item.linkedFiles ?? []).length > 0) {
       container.createEl("div", { text: "\u672C\u5730\u6587\u4EF6", cls: "omni-section-title" });
@@ -5931,180 +6214,6 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
     modal.open();
   }
   async onClose() {
-  }
-};
-
-// src/markdown/markdown-builder.ts
-var SYSTEM_START = "<!-- OMNI_SYSTEM_START -->";
-var SYSTEM_END = "<!-- OMNI_SYSTEM_END -->";
-function yamlString(v) {
-  return JSON.stringify(String(v ?? ""));
-}
-function escapeTitleHash(title) {
-  return (title ?? "").replace(/#/g, "\\#");
-}
-function sanitizeFilename(name) {
-  return (name || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
-}
-var MarkdownBuilder = class {
-  buildFromDTO(dto) {
-    const system = [
-      `title: ${yamlString(dto.title)}`,
-      `platform: ${yamlString(dto.platform)}`,
-      `url: ${yamlString(dto.url)}`,
-      `sync_status: ${yamlString(dto.syncStatus)}`
-    ].join("\n");
-    const comments = (dto.comments ?? []).map((c) => `- **${c.author}**\uFF1A${c.content}`).join("\n");
-    const frontmatter = this.buildFrontmatter(dto);
-    const graphLinks = this.buildGraphLinks(dto);
-    return [
-      frontmatter,
-      "---",
-      "# Omni Collector System Zone",
-      SYSTEM_START,
-      system,
-      SYSTEM_END,
-      "---",
-      "",
-      `# ${escapeTitleHash(dto.title)}`,
-      "",
-      ...graphLinks ? ["## \u5173\u8054", "", graphLinks, ""] : [],
-      ...dto.coverUrl ? [`![cover](${dto.coverUrl})`, ""] : [],
-      ...dto.author ? [`\u4F5C\u8005\uFF1A${dto.author}`, ""] : [],
-      ...dto.description ? ["## \u7B80\u4ECB", "", dto.description, ""] : [],
-      ...comments ? ["## \u8BC4\u8BBA", "", comments, ""] : [],
-      "## \u6574\u7406\u4E0E\u4F18\u5148\u7EA7",
-      "",
-      `\u4F18\u5148\u7EA7\uFF1A${dto.priority} / \u6574\u7406\u72B6\u6001\uFF1A${dto.organizeStatus}`,
-      "",
-      "<!-- \u4EE5\u4E0B\u4E3A\u7528\u6237\u79C1\u6709\u7F16\u8F91\u533A\uFF0C\u4EFB\u4F55\u81EA\u52A8\u5316\u903B\u8F91\u7981\u6B62\u4FEE\u6539 -->",
-      "## \u6211\u7684\u7B14\u8BB0",
-      "",
-      "## \u7CBE\u9009\u8BC4\u8BBA",
-      "",
-      "## \u8BC4\u5206\u4E0E\u4F18\u5148\u7EA7",
-      ""
-    ].join("\n");
-  }
-  buildFrontmatter(dto) {
-    const tags = JSON.stringify(dto.tags ?? []);
-    const topics = JSON.stringify(dto.topics ?? []);
-    return [
-      "---",
-      `platform: ${yamlString(dto.platform)}`,
-      `url: ${yamlString(dto.url)}`,
-      `priority: ${yamlString(dto.priority)}`,
-      `organize_status: ${yamlString(dto.organizeStatus)}`,
-      `tags: ${tags}`,
-      `topics: ${topics}`,
-      "---"
-    ].join("\n");
-  }
-  validateMarkers(md) {
-    const start = md.indexOf(SYSTEM_START);
-    const end = md.indexOf(SYSTEM_END);
-    return start >= 0 && end > start;
-  }
-  replaceSystemZone(md, dto) {
-    if (!this.validateMarkers(md)) {
-      throw new Error("PLUGIN_002: system zone markers missing or misordered");
-    }
-    const system = [
-      `title: ${yamlString(dto.title)}`,
-      `platform: ${yamlString(dto.platform)}`,
-      `url: ${yamlString(dto.url)}`,
-      `sync_status: ${yamlString(dto.syncStatus)}`
-    ].join("\n");
-    let out = md.replace(
-      new RegExp(`${SYSTEM_START}[\\s\\S]*?${SYSTEM_END}`),
-      `${SYSTEM_START}
-${system}
-${SYSTEM_END}`
-    );
-    const newFrontmatter = this.buildFrontmatter(dto);
-    if (/^---\n[\s\S]*?\n---\n/.test(out)) {
-      out = out.replace(/^---\n[\s\S]*?\n---\n/, `${newFrontmatter}
-`);
-    } else {
-      out = `${newFrontmatter}
-${out}`;
-    }
-    const markerIdx = out.indexOf(SYSTEM_END);
-    if (markerIdx >= 0) {
-      const head = out.slice(0, markerIdx + SYSTEM_END.length);
-      let tail = out.slice(markerIdx + SYSTEM_END.length);
-      tail = tail.replace(/^# .*$/m, `# ${escapeTitleHash(dto.title)}`);
-      const links = this.buildGraphLinks(dto);
-      const sectionRe = /^## 关联\s*$[\s\S]*?(?=^## |^# |\Z)/m;
-      if (links) {
-        tail = tail.replace(sectionRe, `## \u5173\u8054
-
-${links}
-
-`);
-      } else {
-        tail = tail.replace(sectionRe, "");
-      }
-      out = head + tail;
-    }
-    return out;
-  }
-  buildGraphLinks(dto) {
-    const topicLinks = (dto.topics ?? []).map((t) => `- [[Omni Collector/Topics/${sanitizeFilename(t)}]]`).join("\n");
-    const tagLinks = (dto.tags ?? []).map((t) => `- [[Omni Collector/Tags/${sanitizeFilename(t)}]]`).join("\n");
-    return [topicLinks, tagLinks].filter(Boolean).join("\n");
-  }
-  /** Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。 */
-  buildTopicHub(topicName, noteLinks) {
-    const name = (topicName || "\u672A\u547D\u540D\u4E3B\u9898").trim();
-    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
-    return [
-      "---",
-      `topic: ${yamlString(name)}`,
-      `tags: ["topic/${sanitizeFilename(name)}"]`,
-      "---",
-      "",
-      `# ${name}`,
-      "",
-      "> \u4E3B\u9898\u805A\u5408\u9875\uFF08Omni Collector \u81EA\u52A8\u751F\u6210\uFF0C\u4FEE\u6539\u4F1A\u88AB\u8986\u76D6\uFF09",
-      "",
-      "## \u6536\u85CF",
-      "",
-      links,
-      ""
-    ].join("\n");
-  }
-  /** Tag 聚合页（PRD 16 / 关系图谱联动）：主 Tag 节点 + 成员笔记 wikilink。 */
-  buildTagHub(tagName, noteLinks) {
-    const name = (tagName || "\u672A\u547D\u540D\u6807\u7B7E").trim();
-    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
-    return [
-      "---",
-      `tags: ["${sanitizeFilename(name)}"]`,
-      "---",
-      "",
-      `# ${name}`,
-      "",
-      "> \u6807\u7B7E\u805A\u5408\u9875\uFF08Omni Collector \u81EA\u52A8\u751F\u6210\uFF0C\u4FEE\u6539\u4F1A\u88AB\u8986\u76D6\uFF09",
-      "",
-      "## \u6536\u85CF",
-      "",
-      links,
-      ""
-    ].join("\n");
-  }
-  extractUserZone(md) {
-    const zone = {};
-    const sections = md.split(/^##\s+/m);
-    for (const section of sections.slice(1)) {
-      const [header, ...body] = section.split("\n");
-      const content = body.join("\n").trim();
-      if (header.includes("\u6211\u7684\u7B14\u8BB0")) zone.note = content;
-      else if (header.includes("\u7CBE\u9009\u8BC4\u8BBA")) zone.starredComments = content;
-      else if (header.includes("\u8BC4\u5206")) zone.rating = content;
-      else if (header.includes("\u4F18\u5148\u7EA7")) zone.priority = content;
-    }
-    return zone;
   }
 };
 
@@ -6230,6 +6339,7 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         onTopic: (id, topic) => this.engine.addTopic(id, topic).then(() => void 0),
         onPriority: (id, priority) => this.engine.setPriority(id, priority).then(() => void 0),
         onConvert: (id, to) => this.engine.convertCollection(id, to).then(() => void 0),
+        onRating: (id, rating) => this.engine.setRating(id, rating).then(() => void 0),
         ensureCover: (url) => this.ensureCover(url),
         openLocalFile: (filePath) => {
           const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -6246,6 +6356,14 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         onPriority: (id, p) => this.engine.setPriority(id, p).then(() => void 0),
         onTag: (id, t) => this.engine.addTag(id, t).then(() => void 0),
         onTopic: (id, t) => this.engine.addTopic(id, t).then(() => void 0),
+        onRating: (id, rating) => this.engine.setRating(id, rating).then(() => void 0),
+        onStarComment: (id, commentId, starred) => this.engine.starComment(id, commentId, starred).then(() => void 0),
+        materializeRating: (dto, rating) => this.writeUserZoneSection(dto, "\u8BC4\u5206", renderRating(rating)),
+        materializeStarredComments: (dto) => this.writeUserZoneSection(
+          dto,
+          "\u7CBE\u9009\u8BC4\u8BBA",
+          (dto.comments ?? []).filter((c) => c.starred).map((c) => `- **${c.author}**\uFF1A${c.content}`).join("\n")
+        ),
         openLocalFile: (filePath) => {
           const file = this.app.vault.getAbstractFileByPath(filePath);
           if (file) void this.app.workspace.getLeaf(false).openFile(file);
@@ -6670,6 +6788,26 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
       }
     }
     new import_obsidian10.Notice(`Omni Collector: \u5DF2\u751F\u6210/\u66F4\u65B0 ${count} \u4E2A Markdown`);
+  }
+  /** 计算收藏 Markdown 路径（与 generateCollectionMarkdown 命名一致）。 */
+  collectionMarkdownPath(dto) {
+    const safeTitle = (dto.title || dto.platformItemId).replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
+    return `Omni Collector/${dto.platform}/${safeTitle}.md`;
+  }
+  /**
+   * 把用户在 UI 的显式操作物化进 Markdown 用户区（评分/精选评论，ADR-006：用户区为权威）。
+   * 文件尚未生成时跳过——之后 generateCollectionMarkdown 按 DTO 建档时会带上最新值。
+   */
+  async writeUserZoneSection(dto, headerKeyword, content) {
+    const filePath = this.collectionMarkdownPath(dto);
+    const vault = this.app.vault;
+    try {
+      if (!await vault.adapter.exists(filePath)) return;
+      const existing = await vault.adapter.read(filePath);
+      const next = new MarkdownBuilder().replaceUserZoneSection(existing, headerKeyword, content);
+      if (next !== null && next !== existing) await vault.adapter.write(filePath, next);
+    } catch {
+    }
   }
   async openCollectionList(platform) {
     const { workspace } = this.app;

@@ -13,6 +13,7 @@ import {
   RuleCenter,
   TagRepository,
   TopicRepository,
+  UserRepository,
 } from "@omni/database";
 import type { CollectionDTO } from "@omni/shared-core";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
@@ -94,6 +95,8 @@ export class TaskService {
       TOPIC_LIST: (msg) => this.topicList(msg),
       TOPIC_RENAME: (msg) => this.topicRename(msg),
       TASK_PRIORITY: (msg) => this.priority(msg),
+      TASK_RATING: (msg) => this.rating(msg),
+      TASK_COMMENT_STAR: (msg) => this.commentStar(msg),
       TASK_INDEX: (msg) => this.index(msg),
       TASK_FETCH: (msg) => this.fetchText(msg),
       TASK_CONVERT: (msg) => this.convert(msg),
@@ -300,6 +303,7 @@ export class TaskService {
         const groups = new ContentGroupRepository(this.db);
         const tagRepo = new TagRepository(this.db);
         const topicRepo = new TopicRepository(this.db);
+        const ratings = this.ratingMap();
         const dtos: CollectionDTO[] = collections.listAll(undefined, true).map((c) => {
           const group = groups.groupOfCollection(c.id);
           const tags = tagRepo.listTagsOfCollection(c.id).map((t) => t.name);
@@ -319,6 +323,7 @@ export class TaskService {
             syncStatus: c.sync_status,
             organizeStatus: c.organize_status,
             priority: c.priority,
+            rating: ratings.get(c.id) ?? null,
             aiStatus: (c.ai_status as CollectionDTO["aiStatus"]) ?? undefined,
             collectedAt: c.collected_at,
             lastSyncedAt: c.last_synced_at ?? undefined,
@@ -403,8 +408,14 @@ export class TaskService {
         const topicRepo = new TopicRepository(this.db);
         const comments = new CommentRepository(this.db)
           .getByCollection(id)
-          .slice(0, 3)
-          .map((c) => ({ author: c.author ?? "", content: c.content }));
+          .slice(0, 20)
+          .map((c) => ({
+            id: c.id,
+            author: c.author ?? "",
+            content: c.content,
+            likeCount: c.like_count,
+            starred: c.is_starred === 1,
+          }));
         const linkedFiles = (this.db
           .prepare("SELECT file_path FROM local_files WHERE linked_collection_id = ? ORDER BY modified_at DESC")
           .all(id) as Array<{ file_path: string }>).map((f) => f.file_path);
@@ -444,6 +455,7 @@ export class TaskService {
           syncStatus: col.sync_status,
           organizeStatus: col.organize_status,
           priority: col.priority,
+          rating: this.ratingMap().get(col.id) ?? null,
           aiStatus: (col.ai_status as CollectionDTO["aiStatus"]) ?? undefined,
           collectedAt: col.collected_at,
           lastSyncedAt: col.last_synced_at ?? undefined,
@@ -646,6 +658,14 @@ export class TaskService {
     }
   }
 
+  /** 用户区评分同步副本（user_notes.user_rating）一次载入，供 DTO 映射。 */
+  private ratingMap(): Map<string, number> {
+    const rows = this.db
+      .prepare("SELECT collection_id, user_rating FROM user_notes WHERE user_rating IS NOT NULL")
+      .all() as Array<{ collection_id: string; user_rating: number }>;
+    return new Map(rows.map((r) => [r.collection_id, r.user_rating]));
+  }
+
   /** 用户手动设置收藏优先级（普通/重要/项目/知识）。 */
   async priority(msg: OmniMessage): Promise<OmniMessage> {
     const collectionId = String(msg.payload.collection_id ?? "");
@@ -659,6 +679,44 @@ export class TaskService {
       return complete(msg.request_id, { task: "priority", collection_id: collectionId, priority });
     } catch (err) {
       return error(msg.request_id, "PRI_001", `PRI_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 用户手动评分 1~5 星（PRD 29.2）；rating=0 表示清除。ADR-006：权威为 Markdown 用户区，本表为同步副本。 */
+  async rating(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const raw = Number(msg.payload.rating);
+    if (!collectionId || !Number.isInteger(raw) || raw < 0 || raw > 5) {
+      return error(msg.request_id, "RAT_001", "RAT_001: invalid collection_id or rating (integer 0~5)");
+    }
+    try {
+      const collections = new CollectionRepository(this.db);
+      if (!collections.findById(collectionId)) {
+        return error(msg.request_id, "RAT_002", "RAT_002: collection not found");
+      }
+      const note = new UserRepository(this.db).setRating(collectionId, raw === 0 ? null : raw);
+      return complete(msg.request_id, { task: "rating", collection_id: collectionId, rating: note.user_rating ?? null });
+    } catch (err) {
+      return error(msg.request_id, "RAT_001", `RAT_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 用户精选评论（PRD 7.3）：切换 is_starred 同步副本，写用户区由 Plugin 物化。 */
+  async commentStar(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const commentId = String(msg.payload.comment_id ?? "");
+    const starred = msg.payload.starred === true || msg.payload.starred === "true";
+    if (!collectionId || !commentId) {
+      return error(msg.request_id, "STAR_001", "STAR_001: invalid collection_id or comment_id");
+    }
+    try {
+      const ok = new CommentRepository(this.db).setStarredInCollection(collectionId, commentId, starred);
+      if (!ok) {
+        return error(msg.request_id, "STAR_002", "STAR_002: comment not found in collection");
+      }
+      return complete(msg.request_id, { task: "comment_star", collection_id: collectionId, comment_id: commentId, starred });
+    } catch (err) {
+      return error(msg.request_id, "STAR_001", `STAR_001: ${(err as Error).message}`);
     }
   }
 

@@ -539,3 +539,48 @@
   font-family: var(--font-monospace);
   font-size: 0.85em;
 }
+
+/* 评分（PRD 29.2）与精选评论（PRD 7.3） */
+.omni-detail-rating {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.omni-detail-rating .omni-section-title {
+  margin: 0;
+}
+.omni-rating-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.omni-rating-label {
+  margin-left: 6px;
+  font-size: 0.88em;
+  color: var(--text-muted);
+}
+.omni-star {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0 2px;
+  font-size: 1.1em;
+  line-height: 1;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.omni-star:hover {
+  color: var(--text-normal);
+}
+.omni-star.omni-star-on {
+  color: var(--color-yellow);
+}
+.omni-comment.omni-comment-starred {
+  background: var(--background-secondary);
+  border-left: 2px solid var(--color-yellow);
+  border-radius: 4px;
+}
+.omni-badge-rating {
+  color: var(--color-yellow);
+}

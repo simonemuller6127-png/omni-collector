@@ -8,11 +8,13 @@ import {
   AIRepository,
   AccountRepository,
   CollectionRepository,
+  CommentRepository,
   ContentGroupRepository,
   MigrationManager,
   RuleCenter,
   TagRepository,
   TopicRepository,
+  UserRepository,
 } from "@omni/database";
 import { CookieCipher, TaskService } from "../src/index.js";
 
@@ -611,6 +613,71 @@ describe("TaskService (internal, fake provider)", () => {
       expect(new TagRepository(vdb).listTagsOfCollection(col.id).map((t) => t.name)).toEqual(["AI"]);
       expect(new TopicRepository(vdb).listTopicsOfCollection(col.id).map((t) => t.name)).toEqual(["AI 工程"]);
       expect(new CollectionRepository(vdb).findById(col.id)?.priority).toBe("important");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("TASK_RATING writes user_rating sync copy (PRD 29.2), 0 clears", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const col = new CollectionRepository(manager.getDb()).upsertByPlatformItem("bilibili", "bv1", { url: "https://b23.tv/BV1", title: "视频" });
+      manager.close();
+
+      const h = service.handlers();
+      const bad = await h.TASK_RATING?.(makeMsg("TASK_RATING", { collection_id: col.id, rating: 6 }));
+      expect(bad?.message_type).toBe("TASK_ERROR");
+      expect(String(bad?.payload?.code)).toContain("RAT_001");
+
+      const set = await h.TASK_RATING?.(makeMsg("TASK_RATING", { collection_id: col.id, rating: 4 }));
+      expect(set?.message_type).toBe("TASK_COMPLETE");
+      expect(set?.payload?.rating).toBe(4);
+
+      const clear = await h.TASK_RATING?.(makeMsg("TASK_RATING", { collection_id: col.id, rating: 0 }));
+      expect(clear?.message_type).toBe("TASK_COMPLETE");
+      expect(clear?.payload?.rating).toBeNull();
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      expect(new UserRepository(verifier.getDb()).getNote(col.id)?.user_rating ?? null).toBeNull();
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("TASK_COMMENT_STAR toggles is_starred within collection scope (PRD 7.3)", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv2", { url: "https://b23.tv/BV2", title: "视频2" });
+      new CommentRepository(db).upsertComments(col.id, [
+        { comment_id: "c1", author: "甲", content: "好文", like_count: 10 },
+        { comment_id: "c2", author: "乙", content: "收藏了", like_count: 5 },
+      ]);
+      const comments = new CommentRepository(db).getByCollection(col.id);
+      manager.close();
+      const target = comments.find((c) => c.comment_id === "c1")!;
+
+      const h = service.handlers();
+      const star = await h.TASK_COMMENT_STAR?.(makeMsg("TASK_COMMENT_STAR", { collection_id: col.id, comment_id: target.id, starred: true }));
+      expect(star?.message_type).toBe("TASK_COMPLETE");
+
+      const mismatch = await h.TASK_COMMENT_STAR?.(makeMsg("TASK_COMMENT_STAR", { collection_id: "no-such", comment_id: target.id, starred: true }));
+      expect(mismatch?.message_type).toBe("TASK_ERROR");
+      expect(String(mismatch?.payload?.code)).toContain("STAR_002");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const after = new CommentRepository(verifier.getDb()).getByCollection(col.id).find((c) => c.id === target.id);
+      expect(after?.is_starred).toBe(1);
       verifier.close();
     } finally {
       service.dispose();

@@ -15,6 +15,8 @@ export interface CollectionDTO {
   syncStatus: "catalog" | "full" | "failed";
   organizeStatus: "unorganized" | "viewed" | "organized" | "archived";
   priority: "normal" | "important" | "project" | "knowledge";
+  /** 用户区评分副本（ADR-006：权威在 Markdown 用户区，PRD 29.2 手动评分）。1~5；0/空表示未评分。 */
+  rating?: number | null;
   aiStatus?: "unprocessed" | "processing" | "done" | "skipped" | "failed";
   collectedAt: string;
   lastSyncedAt?: string;
@@ -22,7 +24,14 @@ export interface CollectionDTO {
   groupName?: string;
   tags?: string[];
   topics?: string[];
-  comments?: Array<{ author: string; content: string }>;
+  comments?: Array<{
+    /** comments 表主键（用于精选评论回写，PRD 7.3）。 */
+    id?: string;
+    author: string;
+    content: string;
+    likeCount?: number;
+    starred?: boolean;
+  }>;
   linkedFiles?: string[];
   related?: Array<{ id: string; platform: string; title: string; saveType: CollectionDTO["saveType"]; contentType: string }>;
 }

@@ -15,6 +15,7 @@ export interface ListDataSource {
   onTopic(collectionId: string, topic: string): Promise<void>;
   onPriority(collectionId: string, priority: CollectionDTO["priority"]): Promise<void>;
   onConvert(collectionId: string, to: "favorited" | "archived"): Promise<void>;
+  onRating(collectionId: string, rating: number): Promise<void>;
   ensureCover(url: string): Promise<string | null>;
   openLocalFile(filePath: string): void;
 }
@@ -87,6 +88,7 @@ export class OmniCollectionListView extends ItemView {
   private saveTypeFilter: "all" | "favorited" | "watch_later" | "liked" = "all";
   private priorityFilter: "all" | CollectionDTO["priority"] = "all";
   private platformFilter: string | null = null;
+  private sortByRating = false;
   private mode: "collections" | "local" = "collections";
   private viewMode: "list" | "card" = "list";
   private coverCache = new Map<string, string>();
@@ -176,6 +178,9 @@ export class OmniCollectionListView extends ItemView {
         tb.createEl('button', { text: p.label, cls: `omni-chip${this.priorityFilter === p.key ? ' omni-chip-active' : ''}` })
           .addEventListener('click', () => { this.priorityFilter = p.key; this.renderToolbar(); void this.renderList(); });
       }
+      tb.createEl('span', { text: '｜', cls: 'omni-toolbar-sep' });
+      tb.createEl('button', { text: '按评分排序', cls: `omni-chip${this.sortByRating ? ' omni-chip-active' : ''}` })
+        .addEventListener('click', () => { this.sortByRating = !this.sortByRating; this.renderToolbar(); void this.renderList(); });
     }
     tb.createEl('button', { text: '刷新', cls: 'omni-chip omni-chip-refresh' })
       .addEventListener('click', () => { void this.refreshList(); });
@@ -233,7 +238,14 @@ export class OmniCollectionListView extends ItemView {
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== 'all') items = items.filter((i) => i.saveType === this.saveTypeFilter);
-
+    if (this.sortByRating) {
+      // 评分排序（PRD 29.2：user_rating 参与排序）；未评分排最后，同分按收藏时间倒序
+      items = [...items].sort((a, b) => {
+        const ra = a.rating ?? 0;
+        const rb = b.rating ?? 0;
+        return rb - ra || new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime();
+      });
+    }
     this.totalEl.setText(`共 ${this.items.length} 条收藏${this.platformFilter ? `（${PLATFORMS.find((p) => p.key === this.platformFilter)?.label ?? this.platformFilter}）` : ''}，当前显示 ${items.length} 条`);
     if (items.length === 0) {
       this.listEl.createEl('div', { text: '暂无收藏（到侧边栏点「同步全部平台」）', cls: 'omni-empty' });
@@ -257,6 +269,7 @@ export class OmniCollectionListView extends ItemView {
         const meta = card.createEl('div', { cls: 'omni-row-meta' });
         meta.createEl('span', { text: PLATFORMS.find((p) => p.key === item.platform)?.label ?? item.platform, cls: 'omni-badge omni-badge-platform' });
         meta.createEl('span', { text: item.saveType === 'liked' ? '点赞' : item.saveType === 'watch_later' ? '稍后再看' : '收藏', cls: 'omni-badge' });
+        if (item.rating) meta.createEl('span', { text: `★${item.rating}`, cls: 'omni-badge omni-badge-rating' });
         card.addEventListener('click', () => this.source.onOpenDetail(item.id));
       }
       return;
@@ -283,6 +296,7 @@ export class OmniCollectionListView extends ItemView {
         row.addClass("omni-row-deleted");
       }
       meta.createEl('span', { text: PRIORITIES.find((p) => p.key === item.priority)?.label ?? item.priority, cls: 'omni-badge omni-badge-priority' });
+      if (item.rating) meta.createEl('span', { text: `★${item.rating}`, cls: 'omni-badge omni-badge-rating' });
       if (item.groupName) meta.createEl('span', { text: `组:${item.groupName}`, cls: 'omni-badge omni-badge-group' });
       for (const t of item.tags ?? []) meta.createEl('span', { text: `#${t}`, cls: 'omni-badge omni-badge-tag' });
       for (const t of item.topics ?? []) meta.createEl('span', { text: `◎${t}`, cls: 'omni-badge omni-badge-topic' });

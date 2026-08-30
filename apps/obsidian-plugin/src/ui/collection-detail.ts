@@ -1,6 +1,7 @@
 import { ItemView, Modal, Notice, WorkspaceLeaf } from "obsidian";
 import type { CollectionDTO } from "@omni/shared-core";
 import { openManualAIModal } from "./manual-ai.js";
+import { renderRating } from "../markdown/markdown-builder.js";
 
 export const VIEW_TYPE_OMNI_DETAIL = "omni-collector-detail";
 
@@ -11,6 +12,14 @@ export interface DetailDataSource {
   onPriority(collectionId: string, priority: CollectionDTO["priority"]): Promise<void>;
   onTag(collectionId: string, tag: string): Promise<void>;
   onTopic(collectionId: string, topic: string): Promise<void>;
+  /** 手动评分 1~5（0=清除），仅写 SQLite 同步副本。 */
+  onRating(collectionId: string, rating: number): Promise<void>;
+  /** 精选评论切换（PRD 7.3），仅写 SQLite 同步副本。 */
+  onStarComment(collectionId: string, commentId: string, starred: boolean): Promise<void>;
+  /** 把最新评分物化进 Markdown 用户区（ADR-006）。 */
+  materializeRating(dto: CollectionDTO, rating: number): Promise<void>;
+  /** 把最新精选评论列表物化进 Markdown 用户区。 */
+  materializeStarredComments(dto: CollectionDTO): Promise<void>;
   openLocalFile(filePath: string): void;
   ensureCover(url: string): Promise<string | null>;
   submitManualAI(collectionId: string, reply: string): Promise<void>;
@@ -173,15 +182,67 @@ export class OmniCollectionDetailView extends ItemView {
       openManualAIModal(this.app, item, { submit: (id, reply) => this.source.submitManualAI(id, reply) }),
     );
 
-    // 已同步评论
+    // 已同步评论（PRD 7.3：可手动精选，精选写入 Markdown 用户区）
     if ((item.comments ?? []).length > 0) {
       container.createEl("div", { text: "评论", cls: "omni-section-title" });
       const comments = container.createEl("div", { cls: "omni-detail-comments" });
       for (const c of item.comments ?? []) {
-        const row = comments.createEl("div", { cls: "omni-comment" });
+        const row = comments.createEl("div", { cls: `omni-comment${c.starred ? " omni-comment-starred" : ""}` });
         row.createEl("span", { text: c.author, cls: "omni-comment-author" });
         row.createEl("span", { text: c.content, cls: "omni-comment-content" });
+        if (c.id) {
+          const starBtn = row.createEl("button", {
+            text: c.starred ? "★" : "☆",
+            cls: `omni-star${c.starred ? " omni-star-on" : ""}`,
+            attr: { title: c.starred ? "取消精选" : "精选此评论" },
+          });
+          starBtn.addEventListener("click", () => {
+            const next = !c.starred;
+            void this.source
+              .onStarComment(item.id, c.id as string, next)
+              .then(() => {
+                c.starred = next;
+                row.toggleClass("omni-comment-starred", next);
+                starBtn.setText(next ? "★" : "☆");
+                starBtn.toggleClass("omni-star-on", next);
+                return this.source.materializeStarredComments(item);
+              })
+              .catch((e) => new Notice(`精选评论失败：${(e as Error).message}`));
+          });
+        }
       }
+    }
+
+    // 手动评分（PRD 29.2：1~5 星，用户区权威 + SQLite 同步副本）
+    const ratingBox = container.createEl("div", { cls: "omni-detail-rating" });
+    ratingBox.createEl("span", { text: "我的评分", cls: "omni-section-title" });
+    const starsRow = ratingBox.createEl("div", { cls: "omni-rating-stars" });
+    let current = item.rating ?? 0;
+    const ratingLabel = starsRow.createEl("span", { text: current > 0 ? renderRating(current) : "未评分", cls: "omni-rating-label" });
+    const starBtns: HTMLButtonElement[] = [];
+    for (let i = 1; i <= 5; i += 1) {
+      const star = starsRow.createEl("button", {
+        text: i <= current ? "★" : "☆",
+        cls: `omni-star${i <= current ? " omni-star-on" : ""}`,
+        attr: { title: `${i} 星` },
+      });
+      starBtns.push(star);
+      star.addEventListener("click", () => {
+        const next = i === current ? 0 : i; // 再点当前最高星 = 清除
+        void this.source
+          .onRating(item.id, next)
+          .then(() => {
+            current = next;
+            item.rating = next || null;
+            ratingLabel.setText(next > 0 ? renderRating(next) : "未评分");
+            for (let j = 1; j <= 5; j += 1) {
+              starBtns[j - 1].setText(j <= next ? "★" : "☆");
+              starBtns[j - 1].toggleClass("omni-star-on", j <= next);
+            }
+            return this.source.materializeRating(item, next);
+          })
+          .catch((e) => new Notice(`评分失败：${(e as Error).message}`));
+      });
     }
 
     // 本地关联文件

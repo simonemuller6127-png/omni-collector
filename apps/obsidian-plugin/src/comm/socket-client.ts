@@ -533,6 +533,26 @@ export class EngineClient {
     });
   }
 
+  /** 用户手动评分 1~5 星（PRD 29.2）；rating=0 清除。 */
+  async setRating(collectionId: string, rating: number): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_RATING",
+      payload: { collection_id: collectionId, rating },
+    });
+  }
+
+  /** 用户精选评论（PRD 7.3）：切换 is_starred 同步副本。 */
+  async starComment(collectionId: string, commentId: string, starred: boolean): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_COMMENT_STAR",
+      payload: { collection_id: collectionId, comment_id: commentId, starred },
+    });
+  }
+
   /** 扫描本地文件夹（Markdown/PDF）并关联收藏。 */
   async scanFolder(folder: string): Promise<OmniMessage> {
     return this.request({

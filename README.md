@@ -9,6 +9,7 @@ Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and l
 - Tag and Topic hub notes create bidirectional links in the Obsidian graph view.
 - AI suggestions are always reviewed by you before they are written.
 - Manual AI mode works without an API key: copy a packed template (single or batch), paste the AI reply, review and confirm.
+- Rate favorites 1–5 stars and star comments; both are materialized into the Markdown user zone (PRD 29.2 / 7.3) and sortable in the list.
 - Sync schedules, rule center, per-platform health lights and anomaly stats are built in.
 
 全平台收藏同步与本地知识管理工具（Obsidian Plugin + 独立本地同步引擎）。
@@ -32,6 +33,7 @@ Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and l
 - 收藏列表：纯文字 / 卡片缩略图双视图，平台 / 类型 / 状态 / 优先级过滤
 - 内容预览：B站 / YouTube 官方嵌入播放器、正文按需抓取（不落盘）、评论展示
 - 整理工作流：未整理 → 已查看 → 已整理 → 已归档；优先级（普通/重要/项目/知识）
+- 手动评分 1~5 星（PRD 29.2）与精选评论（PRD 7.3）：操作物化进 Markdown 用户区，SQLite 同步副本，列表支持按评分排序
 - 稍后再看独立处理：转收藏 / 归档完成
 - 手动 Tag / Topic + 批量操作（批量 Tag / Topic / 优先级 / 整理 / 转收藏 / 归档）
 - Tag Atlas：平台标签自动提取、别名系统、疑似重复一键合并、Tag/Topic 聚合页接入官方关系图谱（双链）
