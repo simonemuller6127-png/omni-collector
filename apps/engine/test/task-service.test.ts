@@ -710,4 +710,53 @@ describe("TaskService (internal, fake provider)", () => {
       service.dispose();
     }
   });
+
+  it("group join/leave/merge and topic merge (PRD 24 manual series ops)", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const c1 = new CollectionRepository(db).upsertByPlatformItem("bilibili", "s1", { url: "https://b23.tv/S1", title: "系列1-1" });
+      const c2 = new CollectionRepository(db).upsertByPlatformItem("bilibili", "s2", { url: "https://b23.tv/S2", title: "系列1-2" });
+      const c3 = new CollectionRepository(db).upsertByPlatformItem("bilibili", "s3", { url: "https://b23.tv/S3", title: "系列2-1" });
+      manager.close();
+
+      const h = service.handlers();
+      // 加入系列（创建）+ 移出
+      expect((await h.TASK_GROUP_JOIN?.(makeMsg("TASK_GROUP_JOIN", { collection_id: c1.id, group: "Vue 入门系列" })))?.message_type).toBe("TASK_COMPLETE");
+      expect((await h.TASK_GROUP_JOIN?.(makeMsg("TASK_GROUP_JOIN", { collection_id: c2.id, group: "Vue 入门系列" })))?.message_type).toBe("TASK_COMPLETE");
+      // 系列进度统计（detail scope）
+      const detail = await h.STATUS_QUERY?.(makeMsg("STATUS_QUERY", { scope: "collection", id: c1.id }));
+      const dto = detail?.payload?.collection as { groupName?: string; groupSize?: number; groupOrganized?: number };
+      expect(dto.groupName).toBe("Vue 入门系列");
+      expect(dto.groupSize).toBe(2);
+      expect(dto.groupOrganized).toBe(0);
+      // 整组合并：Vue 入门系列 并入 Vue 系列
+      const merged = await h.TASK_GROUP_MERGE?.(makeMsg("TASK_GROUP_MERGE", { source: "Vue 入门系列", target: "Vue 系列" }));
+      expect(merged?.message_type).toBe("TASK_COMPLETE");
+      expect(merged?.payload?.moved).toBe(2);
+      // 拆分：移出
+      expect((await h.TASK_GROUP_LEAVE?.(makeMsg("TASK_GROUP_LEAVE", { collection_id: c2.id })))?.message_type).toBe("TASK_COMPLETE");
+      // Topic 合并（重开连接建 Topic，避免与服务内连接竞争关闭时序）
+      const seed = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      seed.migrate();
+      const topics = new TopicRepository(seed.getDb());
+      const t1 = topics.createTopic("前端", c1.id);
+      const t2 = topics.createTopic("Vue");
+      topics.addCollection(t2.id, c2.id);
+      const tm = await h.TOPIC_MERGE?.(makeMsg("TOPIC_MERGE", { source_id: t2.id, target_id: t1.id }));
+      expect(tm?.message_type).toBe("TASK_COMPLETE");
+      expect(tm?.payload?.moved).toBe(1);
+      expect(topics.findById(t2.id)).toBeUndefined();
+      expect(topics.listTopicsOfCollection(c2.id).map((t) => t.name)).toEqual(["前端"]);
+      seed.close();
+      // c3 从未入组，leave 应报错
+      const bad = await h.TASK_GROUP_LEAVE?.(makeMsg("TASK_GROUP_LEAVE", { collection_id: c3.id }));
+      expect(bad?.message_type).toBe("TASK_ERROR");
+    } finally {
+      service.dispose();
+    }
+  });
 });

@@ -10,6 +10,8 @@ export interface TagTopicSource {
   renameTag(tag: string, next: string): Promise<void>;
   listTopics(): Promise<TopicDTO[]>;
   renameTopic(topicId: string, name: string): Promise<void>;
+  /** Topic 手动合并：source 成员并入目标名称对应的 Topic 后删除 source。 */
+  mergeTopic(sourceId: string, targetName: string): Promise<void>;
   listCollections(): Promise<CollectionDTO[]>;
   openDetail(collectionId: string): Promise<void>;
   refreshMarkdown(): Promise<void>;
@@ -208,6 +210,8 @@ export class OmniTagTopicView extends ItemView {
       const actions = row.createEl("div", { cls: "omni-row-actions" });
       this.action(actions, "重命名", () => this.prompt("重命名 Topic", "新名称", (v) =>
         this.source.renameTopic(t.id, v).then(() => this.source.refreshMarkdown())));
+      this.action(actions, "并入…", () => this.prompt(`把「${t.name}」并入`, "目标 Topic 名称", (v) =>
+        this.source.mergeTopic(t.id, v).then(() => this.source.refreshMarkdown())));
     }
     if (topics.length === 0) {
       list.createEl("div", { text: "暂无 Topic。AI 建议确认后会自动创建；也可在收藏详情手动归入 Topic。", cls: "omni-empty" });

@@ -92,6 +92,9 @@ export default class OmniCollectorPlugin extends Plugin {
               .map((c) => `- **${c.author}**：${c.content}`)
               .join("\n"),
           ),
+        onGroupJoin: (id, group) => this.engine.joinGroup(id, group).then(() => undefined),
+        onGroupLeave: (id) => this.engine.leaveGroup(id).then(() => undefined),
+        onGroupMerge: (source, target) => this.engine.mergeGroup(source, target).then(() => undefined),
         openLocalFile: (filePath) => {
           const file = this.app.vault.getAbstractFileByPath(filePath);
           if (file) void this.app.workspace.getLeaf(false).openFile(file as import("obsidian").TFile);
@@ -121,6 +124,12 @@ export default class OmniCollectorPlugin extends Plugin {
           await this.renameHubFile("Tags", tag, next);
         },
         listTopics: () => this.engine.listTopics(),
+        mergeTopic: async (sourceId, targetName) => {
+          const target = (await this.engine.listTopics().catch(() => [])).find((t) => t.name === targetName);
+          if (!target) throw new Error(`目标 Topic「${targetName}」不存在`);
+          if (target.id === sourceId) throw new Error("不能合并到自身");
+          await this.engine.mergeTopic(sourceId, target.id);
+        },
         renameTopic: async (id, name) => {
           const topics = await this.engine.listTopics().catch(() => []);
           const old = topics.find((t) => t.id === id)?.name ?? "";

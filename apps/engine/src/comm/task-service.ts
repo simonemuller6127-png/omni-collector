@@ -88,6 +88,10 @@ export class TaskService {
       TASK_COMMENTS: (msg) => this.comments(msg),
       TASK_AI: (msg) => this.ai(msg),
       TASK_GROUP: (msg) => this.group(msg),
+      TASK_GROUP_JOIN: (msg) => this.groupJoin(msg),
+      TASK_GROUP_LEAVE: (msg) => this.groupLeave(msg),
+      TASK_GROUP_MERGE: (msg) => this.groupMerge(msg),
+      TOPIC_MERGE: (msg) => this.topicMerge(msg),
       TASK_ORGANIZE: (msg) => this.organize(msg),
       TASK_TAG: (msg) => this.tag(msg),
       TASK_TOPIC: (msg) => this.topic(msg),
@@ -424,10 +428,14 @@ export class TaskService {
           .prepare("SELECT file_path FROM local_files WHERE linked_collection_id = ? ORDER BY modified_at DESC")
           .all(id) as Array<{ file_path: string }>).map((f) => f.file_path);
         const group = groups.groupOfCollection(col.id);
+        const groupMembers = group ? groups.listCollectionsInGroup(group.id) : [];
+        const groupOrganized = groupMembers.filter(
+          (m) => m.organize_status === "organized" || m.organize_status === "archived",
+        ).length;
         // Related Collections：同分组优先，其次同标题+同作者的跨平台启发式，最后本地语义相似（规则开关，默认关）
         const related: Array<{ id: string; platform: string; title: string; saveType: CollectionDTO["saveType"]; contentType: string; reason?: string }> = [];
         if (group) {
-          for (const r of groups.listCollectionsInGroup(group.id)) {
+          for (const r of groupMembers) {
             if (r.id === col.id) continue;
             related.push({ id: r.id, platform: r.platform, title: r.title ?? "", saveType: r.save_type as CollectionDTO["saveType"], contentType: r.content_type, reason: "同分组" });
           }
@@ -483,6 +491,8 @@ export class TaskService {
           lastSyncedAt: col.last_synced_at ?? undefined,
           groupId: group?.id,
           groupName: group?.name,
+          groupSize: group ? groupMembers.length : undefined,
+          groupOrganized: group ? groupOrganized : undefined,
           tags: tagRepo.listTagsOfCollection(col.id).map((t) => t.name),
           topics: topicRepo.listTopicsOfCollection(col.id).map((t) => t.name),
           comments,
@@ -762,6 +772,97 @@ export class TaskService {
     }
   }
 
+  /** 系列手动合并/拆分（PRD 24）：按名称加入分组/系列，已归属其他分组时自动迁移。 */
+  async groupJoin(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const groupName = String(msg.payload.group ?? "").trim();
+    if (!collectionId || !groupName) {
+      return error(msg.request_id, "GRP_001", "GRP_001: invalid collection_id or group name");
+    }
+    try {
+      const groups = new ContentGroupRepository(this.db);
+      const existing = groups.listGroups(2000).find((g) => g.name === groupName);
+      const group = existing ?? groups.createGroup(groupName);
+      groups.bindCollection(group.id, collectionId);
+      this.recordFeedback(collectionId, "group_joined", { group: groupName });
+      return complete(msg.request_id, { task: "group_join", collection_id: collectionId, group_id: group.id, group: group.name });
+    } catch (err) {
+      return error(msg.request_id, "GRP_001", `GRP_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 系列手动拆分：把收藏移出所在分组。 */
+  async groupLeave(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    if (!collectionId) {
+      return error(msg.request_id, "GRP_002", "GRP_002: invalid collection_id");
+    }
+    try {
+      const groups = new ContentGroupRepository(this.db);
+      const group = groups.groupOfCollection(collectionId);
+      if (!group) {
+        return error(msg.request_id, "GRP_002", "GRP_002: collection has no group");
+      }
+      groups.unbindCollection(collectionId);
+      this.recordFeedback(collectionId, "group_left", { group: group.name });
+      return complete(msg.request_id, { task: "group_leave", collection_id: collectionId, group: group.name });
+    } catch (err) {
+      return error(msg.request_id, "GRP_002", `GRP_002: ${(err as Error).message}`);
+    }
+  }
+
+  /** 系列手动合并：把 source 分组全部成员并入 target 分组并删除 source（按名称）。 */
+  async groupMerge(msg: OmniMessage): Promise<OmniMessage> {
+    const source = String(msg.payload.source ?? "").trim();
+    const target = String(msg.payload.target ?? "").trim();
+    if (!source || !target || source === target) {
+      return error(msg.request_id, "GRP_003", "GRP_003: invalid source/target group names");
+    }
+    try {
+      const groups = new ContentGroupRepository(this.db);
+      const all = groups.listGroups(2000);
+      const src = all.find((g) => g.name === source);
+      const dst = all.find((g) => g.name === target) ?? groups.createGroup(target);
+      if (!src) {
+        return error(msg.request_id, "GRP_003", "GRP_003: source group not found");
+      }
+      const members = groups.listCollectionsInGroup(src.id);
+      for (const m of members) {
+        groups.bindCollection(dst.id, m.id);
+        this.recordFeedback(m.id, "group_joined", { group: dst.name, merged_from: src.name });
+      }
+      groups.deleteGroup(src.id);
+      return complete(msg.request_id, { task: "group_merge", source: src.name, target: dst.name, moved: members.length });
+    } catch (err) {
+      return error(msg.request_id, "GRP_003", `GRP_003: ${(err as Error).message}`);
+    }
+  }
+
+  /** Topic 手动合并：source 成员并入 target 后删除 source（PRD 17 用户确认操作）。 */
+  async topicMerge(msg: OmniMessage): Promise<OmniMessage> {
+    const sourceId = String(msg.payload.source_id ?? "");
+    const targetId = String(msg.payload.target_id ?? "");
+    if (!sourceId || !targetId || sourceId === targetId) {
+      return error(msg.request_id, "TPC_001", "TPC_001: invalid source_id/target_id");
+    }
+    try {
+      const topics = new TopicRepository(this.db);
+      const src = topics.findById(sourceId);
+      const dst = topics.findById(targetId);
+      if (!src || !dst) {
+        return error(msg.request_id, "TPC_001", "TPC_001: source or target topic not found");
+      }
+      const members = (JSON.parse(src.collection_ids ?? "[]") as string[]) ?? [];
+      for (const cid of members) {
+        topics.addCollection(targetId, cid);
+      }
+      topics.deleteTopic(sourceId);
+      return complete(msg.request_id, { task: "topic_merge", source: src.name, target: dst.name, moved: members.length });
+    } catch (err) {
+      return error(msg.request_id, "TPC_001", `TPC_001: ${(err as Error).message}`);
+    }
+  }
+
   /** 用户手动评分 1~5 星（PRD 29.2）；rating=0 表示清除。ADR-006：权威为 Markdown 用户区，本表为同步副本。 */
   async rating(msg: OmniMessage): Promise<OmniMessage> {    const collectionId = String(msg.payload.collection_id ?? "");
     const raw = Number(msg.payload.rating);
@@ -966,7 +1067,11 @@ export class TaskService {
       const files = new FileRepository(this.db);
       const collections = new CollectionRepository(this.db);
       const indexer = new FileIndexer(files, (url) => collections.findByUrl(url)?.id);
-      const report = indexer.scan(folder, true);
+      // 规则驱动（PRD 9.4/9.7）：增强分析与哈希追踪均默认关闭，用户在规则中心开启
+      const report = indexer.scan(folder, {
+        enhanced: this.rules.getBool("file_enhanced_analysis", false),
+        hashing: this.rules.getBool("file_hash_tracking", false),
+      });
       return complete(msg.request_id, { task: "index", folder, report });
     } catch (err) {
       return error(msg.request_id, "IDX_001", `IDX_001: ${(err as Error).message}`);

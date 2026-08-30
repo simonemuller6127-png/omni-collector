@@ -20,6 +20,10 @@ export interface DetailDataSource {
   materializeRating(dto: CollectionDTO, rating: number): Promise<void>;
   /** 把最新精选评论列表物化进 Markdown 用户区。 */
   materializeStarredComments(dto: CollectionDTO): Promise<void>;
+  /** 系列/分组手动操作（PRD 24）：加入（不存在则创建）/ 移出 / 整组并入。 */
+  onGroupJoin(collectionId: string, group: string): Promise<void>;
+  onGroupLeave(collectionId: string): Promise<void>;
+  onGroupMerge(sourceGroup: string, targetGroup: string): Promise<void>;
   openLocalFile(filePath: string): void;
   ensureCover(url: string): Promise<string | null>;
   submitManualAI(collectionId: string, reply: string): Promise<void>;
@@ -260,6 +264,28 @@ export class OmniCollectionDetailView extends ItemView {
       });
     }
 
+    // 系列 / 分组进度（PRD 24）：自动识别的系列与手动操作入口
+    if (item.groupName) {
+      const size = item.groupSize ?? (item.related ?? []).length + 1;
+      const done = item.groupOrganized ?? 0;
+      container.createEl("div", {
+        text: `系列「${item.groupName}」：已整理 ${done}/${size}`,
+        cls: "omni-section-title",
+      });
+      const seriesBtns = container.createEl("div", { cls: "omni-detail-actions" });
+      seriesBtns.createEl("button", { text: "移出系列", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+        void this.source
+          .onGroupLeave(item.id)
+          .then(() => this.renderContent())
+          .catch((e) => new Notice(`移出失败：${(e as Error).message}`));
+      });
+      seriesBtns.createEl("button", { text: "整个系列并入…", cls: "omni-btn omni-btn-sm omni-btn-ghost" }).addEventListener("click", () => {
+        this.promptText("并入其他系列/分组", "输入目标系列名", async (target) => {
+          await this.source.onGroupMerge(item.groupName as string, target);
+        });
+      });
+    }
+
     // Related Collections（同分组或同实体跨平台）
     if ((item.related ?? []).length > 0) {
       container.createEl("div", { text: "相关收藏", cls: "omni-section-title" });
@@ -293,6 +319,14 @@ export class OmniCollectionDetailView extends ItemView {
       void this.source.onPriority(item.id, next).then(() => {
         item.priority = next;
         priBtn.setText(`优先级：${next}`);
+      });
+    });
+    actions.createEl("button", {
+      text: item.groupName ? "移入其他系列…" : "加入系列…",
+      cls: "omni-act",
+    }).addEventListener("click", () => {
+      this.promptText("加入系列/分组", "输入系列名（不存在则自动创建）", async (group) => {
+        await this.source.onGroupJoin(item.id, group);
       });
     });
   }

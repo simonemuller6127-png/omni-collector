@@ -343,6 +343,46 @@ export class EngineClient {
     });
   }
 
+  /** 系列手动合并（PRD 24）：加入分组/系列，按名称，不存在则创建。 */
+  async joinGroup(collectionId: string, group: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_GROUP_JOIN",
+      payload: { collection_id: collectionId, group },
+    });
+  }
+
+  /** 系列手动拆分（PRD 24）：移出所在分组。 */
+  async leaveGroup(collectionId: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_GROUP_LEAVE",
+      payload: { collection_id: collectionId },
+    });
+  }
+
+  /** 分组整体并入另一分组（按名称，source 删除）。 */
+  async mergeGroup(source: string, target: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_GROUP_MERGE",
+      payload: { source, target },
+    });
+  }
+
+  /** Topic 合并：source 成员并入 target 后删除 source。 */
+  async mergeTopic(sourceId: string, targetId: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TOPIC_MERGE",
+      payload: { source_id: sourceId, target_id: targetId },
+    });
+  }
+
   /** 查询收藏列表（DTO）。 */
   async listCollections(): Promise<import("@omni/shared-core").CollectionDTO[]> {
     const res = await this.request({

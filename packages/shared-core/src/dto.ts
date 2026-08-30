@@ -22,6 +22,9 @@ export interface CollectionDTO {
   lastSyncedAt?: string;
   groupId?: string;
   groupName?: string;
+  /** 系列进度（PRD 24）：所在分组成员数与已整理数（organized/archived 计入）。 */
+  groupSize?: number;
+  groupOrganized?: number;
   tags?: string[];
   topics?: string[];
   comments?: Array<{
