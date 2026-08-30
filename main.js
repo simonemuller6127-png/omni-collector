@@ -4151,6 +4151,10 @@ var MESSAGE_TYPES = [
   "TASK_RATING",
   "TASK_COMMENT_STAR",
   "TASK_LOGIN",
+  "TASK_GROUP_JOIN",
+  "TASK_GROUP_LEAVE",
+  "TASK_GROUP_MERGE",
+  "TOPIC_MERGE",
   "TASK_INDEX",
   "TASK_FETCH",
   "TASK_CONVERT",
@@ -4191,6 +4195,10 @@ var REQUIRED_PAYLOAD_FIELDS = {
   TASK_RATING: ["collection_id", "rating"],
   TASK_COMMENT_STAR: ["collection_id", "comment_id", "starred"],
   TASK_LOGIN: ["platform"],
+  TASK_GROUP_JOIN: ["collection_id", "group"],
+  TASK_GROUP_LEAVE: ["collection_id"],
+  TASK_GROUP_MERGE: ["source", "target"],
+  TOPIC_MERGE: ["source_id", "target_id"],
   TASK_INDEX: ["folder"],
   TASK_FETCH: ["url"],
   TASK_CONVERT: ["collection_id", "to"],
@@ -4490,6 +4498,42 @@ var EngineClient = class {
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       message_type: "TASK_GROUP",
       payload: {}
+    });
+  }
+  /** 系列手动合并（PRD 24）：加入分组/系列，按名称，不存在则创建。 */
+  async joinGroup(collectionId, group) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_GROUP_JOIN",
+      payload: { collection_id: collectionId, group }
+    });
+  }
+  /** 系列手动拆分（PRD 24）：移出所在分组。 */
+  async leaveGroup(collectionId) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_GROUP_LEAVE",
+      payload: { collection_id: collectionId }
+    });
+  }
+  /** 分组整体并入另一分组（按名称，source 删除）。 */
+  async mergeGroup(source, target) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_GROUP_MERGE",
+      payload: { source, target }
+    });
+  }
+  /** Topic 合并：source 成员并入 target 后删除 source。 */
+  async mergeTopic(sourceId, targetId) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TOPIC_MERGE",
+      payload: { source_id: sourceId, target_id: targetId }
     });
   }
   /** 查询收藏列表（DTO）。 */
@@ -5265,6 +5309,7 @@ var OmniTagTopicView = class extends import_obsidian5.ItemView {
       }
       const actions = row.createEl("div", { cls: "omni-row-actions" });
       this.action(actions, "\u91CD\u547D\u540D", () => this.prompt("\u91CD\u547D\u540D Topic", "\u65B0\u540D\u79F0", (v) => this.source.renameTopic(t.id, v).then(() => this.source.refreshMarkdown())));
+      this.action(actions, "\u5E76\u5165\u2026", () => this.prompt(`\u628A\u300C${t.name}\u300D\u5E76\u5165`, "\u76EE\u6807 Topic \u540D\u79F0", (v) => this.source.mergeTopic(t.id, v).then(() => this.source.refreshMarkdown())));
     }
     if (topics.length === 0) {
       list.createEl("div", { text: "\u6682\u65E0 Topic\u3002AI \u5EFA\u8BAE\u786E\u8BA4\u540E\u4F1A\u81EA\u52A8\u521B\u5EFA\uFF1B\u4E5F\u53EF\u5728\u6536\u85CF\u8BE6\u60C5\u624B\u52A8\u5F52\u5165 Topic\u3002", cls: "omni-empty" });
@@ -6243,6 +6288,23 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
         if (first) this.source.openLocalFile(first);
       });
     }
+    if (item.groupName) {
+      const size = item.groupSize ?? (item.related ?? []).length + 1;
+      const done = item.groupOrganized ?? 0;
+      container.createEl("div", {
+        text: `\u7CFB\u5217\u300C${item.groupName}\u300D\uFF1A\u5DF2\u6574\u7406 ${done}/${size}`,
+        cls: "omni-section-title"
+      });
+      const seriesBtns = container.createEl("div", { cls: "omni-detail-actions" });
+      seriesBtns.createEl("button", { text: "\u79FB\u51FA\u7CFB\u5217", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+        void this.source.onGroupLeave(item.id).then(() => this.renderContent()).catch((e) => new import_obsidian8.Notice(`\u79FB\u51FA\u5931\u8D25\uFF1A${e.message}`));
+      });
+      seriesBtns.createEl("button", { text: "\u6574\u4E2A\u7CFB\u5217\u5E76\u5165\u2026", cls: "omni-btn omni-btn-sm omni-btn-ghost" }).addEventListener("click", () => {
+        this.promptText("\u5E76\u5165\u5176\u4ED6\u7CFB\u5217/\u5206\u7EC4", "\u8F93\u5165\u76EE\u6807\u7CFB\u5217\u540D", async (target) => {
+          await this.source.onGroupMerge(item.groupName, target);
+        });
+      });
+    }
     if ((item.related ?? []).length > 0) {
       container.createEl("div", { text: "\u76F8\u5173\u6536\u85CF", cls: "omni-section-title" });
       const relatedBox = container.createEl("div", { cls: "omni-detail-related" });
@@ -6273,6 +6335,14 @@ var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
       void this.source.onPriority(item.id, next).then(() => {
         item.priority = next;
         priBtn.setText(`\u4F18\u5148\u7EA7\uFF1A${next}`);
+      });
+    });
+    actions.createEl("button", {
+      text: item.groupName ? "\u79FB\u5165\u5176\u4ED6\u7CFB\u5217\u2026" : "\u52A0\u5165\u7CFB\u5217\u2026",
+      cls: "omni-act"
+    }).addEventListener("click", () => {
+      this.promptText("\u52A0\u5165\u7CFB\u5217/\u5206\u7EC4", "\u8F93\u5165\u7CFB\u5217\u540D\uFF08\u4E0D\u5B58\u5728\u5219\u81EA\u52A8\u521B\u5EFA\uFF09", async (group) => {
+        await this.source.onGroupJoin(item.id, group);
       });
     });
   }
@@ -6445,6 +6515,9 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
           "\u7CBE\u9009\u8BC4\u8BBA",
           (dto.comments ?? []).filter((c) => c.starred).map((c) => `- **${c.author}**\uFF1A${c.content}`).join("\n")
         ),
+        onGroupJoin: (id, group) => this.engine.joinGroup(id, group).then(() => void 0),
+        onGroupLeave: (id) => this.engine.leaveGroup(id).then(() => void 0),
+        onGroupMerge: (source2, target) => this.engine.mergeGroup(source2, target).then(() => void 0),
         openLocalFile: (filePath) => {
           const file = this.app.vault.getAbstractFileByPath(filePath);
           if (file) void this.app.workspace.getLeaf(false).openFile(file);
@@ -6474,6 +6547,12 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
           await this.renameHubFile("Tags", tag, next);
         },
         listTopics: () => this.engine.listTopics(),
+        mergeTopic: async (sourceId, targetName) => {
+          const target = (await this.engine.listTopics().catch(() => [])).find((t) => t.name === targetName);
+          if (!target) throw new Error(`\u76EE\u6807 Topic\u300C${targetName}\u300D\u4E0D\u5B58\u5728`);
+          if (target.id === sourceId) throw new Error("\u4E0D\u80FD\u5408\u5E76\u5230\u81EA\u8EAB");
+          await this.engine.mergeTopic(sourceId, target.id);
+        },
         renameTopic: async (id, name) => {
           const topics = await this.engine.listTopics().catch(() => []);
           const old = topics.find((t) => t.id === id)?.name ?? "";

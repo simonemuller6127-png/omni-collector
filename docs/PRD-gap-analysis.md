@@ -1,8 +1,8 @@
-# Omni Collector × PRD v4.2 差距比对报告（0.6.0 版）
+# Omni Collector × PRD v4.2 差距比对报告（0.7.0 版）
 
 > 比对基准：`Omni_Collector_PRD_v4.2_最终版.docx` 第二十八章《功能需求全量清单 v4.1》、第二十九章《产品验收标准》，以及 SPEC v3.3 分阶段路线（V1.0 → V1.5 → V2.0 → V3.0）。
 > 状态口径：✅ 已实现并测试覆盖 · 🟡 部分实现/有替代路径 · ❌ 未实现（多属 V3.0 范围）。
-> 最近更新：0.6.0（登录引导 / Topic hub 隔离 / 本地语义关联 / 反馈事件 / 超期提醒）。
+> 最近更新：0.7.0（系列手动管理 / Topic 合并 / 哈希追踪 / 增强分析）。
 
 ## 一、V1.0 Foundation（P0）
 
@@ -30,12 +30,12 @@
 | Tag Alias 别名系统 | ✅ | tag_aliases + Tag Atlas UI |
 | 外部 Markdown 路径支持 | ✅ | linked_note_path |
 | 本地文件轻量索引层 | ✅ | 多目录扫描（.md/.pdf）按 URL 关联 |
-| 文件增强分析（可选） | 🟡 | 规则与 file_index 表就绪；TOC/章节提取待接入 |
+| 文件增强分析（可选） | 🟡 | Markdown 章节/TOC 已实现（0.7.0，规则开启）；PDF 解析按 PRD「禁止全文提取」原则保持 skipped |
 | 文件类型插件渲染（方式C） | 🟡 | 已支持打开关联笔记；渲染依赖 Docxer 等第三方插件 |
-| 文件丢失软警告+哈希追踪 | 🟡 | file_missing 软警告 ✅；第二层哈希追踪待做（local_files.file_hash 索引已建） |
+| 文件丢失软警告+哈希追踪 | ✅ | 软警告默认（扫描时标记 file_missing）；哈希追踪规则化开启，SHA-256 自动恢复移动文件关联（0.7.0） |
 | 网页渲染（Surfing+浏览器跳转） | 🟡 | 浏览器跳转 ✅；Surfing 组合为用户可选 |
 | Inbox Queue + 侧边栏角标 | ✅ | inbox_status 流转 + 侧边栏汇总/超期提醒（角标以文字统计呈现） |
-| Series 系列识别 | 🟡 | scoreSeriesPair（PRD 24 权重）已并入分组识别候选；手动合并/拆分与系列进度视图待做 |
+| Series 系列识别 | ✅ | scoreSeriesPair（PRD 24 权重）自动识别候选 + 手动加入/移出/整组并入 + 系列进度（已整理 n/m）（0.7.0） |
 | 账号配置（多平台+Cookie 加密） | ✅ | 0.6.0 登录窗口引导（PRD 26.1②③）+ Cookie-Editor 导入；AES-256-GCM 本地加密 |
 | 大规模体验优化 | ✅ | SQLite 索引 + 10k 性能测试 |
 | 多媒体内容处理边界规则 | ✅ | `multimedia_default_download` 等规则化 |
@@ -59,19 +59,18 @@
 
 ## 四、验收标准对照（PRD 29.1）
 
-多平台同步 ✅ · 收藏/稍后再看分离 ✅ · 增量同步 ✅ · URL/标题/封面/简介/评论 ✅ · Tag ✅ · Topic ✅ · Series 🟡 · Markdown ✅ · 手动精选评论 ✅ · 手动评分 ✅ · 手动分类 ✅ · AI 关闭可运行 ✅ · 外部 Markdown 路径 ✅ · 文件移动恢复 🟡（软警告✅/哈希追踪待做） · 低空间占用 ✅ · AI API 模式 ✅ · AI 插件复用 ✅ · Manual 模式 ✅ · 安全（不存密码/可暂停/本地加密/登录窗口不接触凭据） ✅
+多平台同步 ✅ · 收藏/稍后再看分离 ✅ · 增量同步 ✅ · URL/标题/封面/简介/评论 ✅ · Tag ✅ · Topic ✅ · Series ✅ · Markdown ✅ · 手动精选评论 ✅ · 手动评分 ✅ · 手动分类 ✅ · AI 关闭可运行 ✅ · 外部 Markdown 路径 ✅ · 文件移动恢复 ✅（软警告 + 哈希追踪 0.7.0） · 低空间占用 ✅ · AI API 模式 ✅ · AI 插件复用 ✅ · Manual 模式 ✅ · 安全（不存密码/可暂停/本地加密/登录窗口不接触凭据） ✅
 
 ## 五、剩余差距（按优先级建议）
 
-1. **Series 深水区**（P1）：手动合并/拆分系列、按平台原始顺序排列、系列进度 Dataview 模板。
-2. **文件哈希追踪**（P1，可选层）：夜间周任务 + 移动恢复指引（表结构与索引已备）。
-3. **文件增强分析**（P1，可选）：TOC/章节标题提取接入 file_index.analysis_status 状态机。
-4. **Topic 手动合并/拆分 UI**：目前 Topic 仅重命名；合并可在 Tag Atlas 模式上补齐。
-5. **个性化 AI 建议**（V2.0 末）：基于 user_feedback 历史调整建议权重（事件数据 0.6.0 起已积累）。
-6. **存储升级项**（P2）：SQLCipher 可选库加密、macOS Keychain / Windows Credential Manager 凭据托管。
-7. **V3.0 生态项**：更多平台（知乎/GitHub Star/Reddit/…）、知识图谱可视化、AI Agent 主动整理 —— 按 PRD 节奏不在当前版本。
+1. **文件增强分析 · PDF 部分**（P1，可选）：Markdown 已覆盖；PDF 章节解析需引入解析依赖，按「禁止全文提取」原则暂缓，保持 skipped。
+2. **文件类型渲染（方式C）**（P1）：文档化推荐渲染插件清单（Docxer 等）与组合方式。
+3. **个性化 AI 建议**（V2.0 末）：基于 user_feedback 历史调整建议权重（事件数据 0.6.0 起已积累）。
+4. **存储升级项**（P2）：SQLCipher 可选库加密、macOS Keychain / Windows Credential Manager 凭据托管。
+5. **V3.0 生态项**：更多平台（知乎/GitHub Star/Reddit/…）、知识图谱可视化、AI Agent 主动整理 —— 按 PRD 节奏不在当前版本。
+6. **Datasette 调试界面**（P2，长期保留）。
 
-## 六、本轮（0.6.0）补齐记录
+## 六、分版本补齐记录
 
 | 提交 | 内容 |
 | --- | --- |
@@ -79,3 +78,4 @@
 | eefa520 | Topic/Tag 聚合页系统区/用户区隔离 + Dataview 动态索引 + aliases + 重命名文件跟随（Topic 重心基建） |
 | 42af8ad | 本地语义关联 TF-IDF（规则开关）接入 Related Collections 三级链路 |
 | cccbfbe | 超期提醒统计（规则驱动）+ user_feedback 用户行为事件采集（PRD 18.1/21.1） |
+| 8365799 | 系列手动管理（加入/移出/整组并入 + 系列进度，PRD 24）+ Topic 合并（PRD 17）+ 文件哈希追踪与丢失恢复（PRD 9.7）+ Markdown 增强 TOC 分析（PRD 9.4）+ 修复重扫清空关联的仓储缺陷 |

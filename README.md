@@ -38,9 +38,13 @@ Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and l
 - 手动 Tag / Topic + 批量操作（批量 Tag / Topic / 优先级 / 整理 / 转收藏 / 归档）
 - Tag Atlas：平台标签自动提取、别名系统、疑似重复一键合并、Tag/Topic 聚合页接入官方关系图谱（双链）
 - Topic 重心：聚合页（hub）采用系统区/用户区隔离——成员 wikilink + Dataview 动态索引自动维护，「我的整理」用户区与 frontmatter `aliases` 永不覆盖；重命名自动跟随移动文件
+- 系列（Series）：自动识别 + 手动管理——详情页展示系列进度（已整理 n/m），支持加入/移出/整组并入（PRD 24）
+- Topic 手动合并：Tag/Topic 管理页一键把源 Topic 并入目标，成员自动迁移
 - Related Collections：同 ContentGroup / 同实体 / 本地语义相似（TF-IDF，规则 `semantic_related_enabled` 可选开启，纯本地无 API）
 - 超期提醒：侧边栏提示超期未整理（默认 14 天）与稍后再看超期（默认 30 天），天数由规则中心配置
 - 本地文件：多目录扫描（.md / .pdf），按系统区 URL 自动关联收藏；自动 / 手动扫描
+- 文件丢失软警告默认开启；规则中心开启 `file_hash_tracking` 后按 SHA-256 自动恢复移动过的文件关联（PRD 9.7）
+- 规则中心开启 `file_enhanced_analysis` 后，Markdown 扫描额外提取章节标题与 TOC 结构（PRD 9.4，不落盘正文）
 - Markdown 协议：系统区（Engine 自动写入）与用户区（永不覆盖）隔离，Dataview 模板
 
 ### AI（可选，默认关闭）
