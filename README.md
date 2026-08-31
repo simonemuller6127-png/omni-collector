@@ -143,6 +143,14 @@ pnpm test
 node apps/engine/scripts/deploy.mjs --data-dir <你的数据目录>
 ```
 
+### 仓库占用与维护
+
+工作区中真正上传到 GitHub 的源码约 **1.1 MB**（183 个文件），其余 ~500 MB 是
+`node_modules` / `dist` / `.turbo` / `data/`（含 Playwright Profile）/ `_codex_tmp/`
+等被 `.gitignore` 排除的运行时与构建缓存。详细的清理策略与可删除项请见
+[`docs/REPOSITORY-MAINTENANCE.md`](docs/REPOSITORY-MAINTENANCE.md)；
+本人的自主迭代流程见 [`docs/WORKFLOW.md`](docs/WORKFLOW.md)。
+
 ## License
 
 MIT
