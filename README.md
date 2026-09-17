@@ -1,118 +1,182 @@
 # Omni Collector
 
-Omni Collector is a desktop-only Obsidian plugin that syncs your favorites and likes from Bilibili, YouTube, Xiaohongshu (Little Red Book), MakerWorld and Xiaoheihe into your vault. It supports AI tagging suggestions (Tag / Topic / Group / Summary), a Tag Atlas with aliases, Topic hub notes linked into the Obsidian graph, local file indexing, and an optional local sync engine (Node.js).
+**English** · [简体中文](README.zh-CN.md)
 
-**Highlights**
+**Turn scattered favorites into a searchable library in Obsidian.**
 
-- Full catalog sync (titles, URLs, covers) for all five platforms.
-- Tag Atlas: platform hashtags are extracted automatically, near-duplicate tags can be merged, aliases resolve to one canonical tag.
-- Tag and Topic hub notes create bidirectional links in the Obsidian graph view.
-- AI suggestions are always reviewed by you before they are written.
-- Manual AI mode works without an API key: copy a packed template (single or batch), paste the AI reply, review and confirm.
-- Sync schedules, rule center, per-platform health lights and anomaly stats are built in.
+Sync saved items from **Bilibili, YouTube, Xiaohongshu, MakerWorld and Xiaoheihe** into your vault. Find them in one place, organize them with tags and topics, and connect them to your own notes.
 
-全平台收藏同步与本地知识管理工具（Obsidian Plugin + 独立本地同步引擎）。
+[![Release](https://img.shields.io/github/v/release/simonemuller6127-png/omni-collector)](https://github.com/simonemuller6127-png/omni-collector/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Obsidian desktop](https://img.shields.io/badge/Obsidian-desktop-7C3AED)](https://obsidian.md)
 
-把 **B站 / YouTube / 小红书 / MakerWorld / 小黑盒** 的收藏、点赞、稍后再看自动同步进 Obsidian，并提供 AI 整理建议（Tag / Topic / 分组 / 摘要）、跨平台内容关联、本地文件索引与 Tag Atlas 标签体系。
-
-## 功能
-
-### 平台同步
-
-- B站：全部收藏夹 + 稍后再看（WBI 签名直连，评论采集）
-- YouTube：Liked 全量列表（yt-dlp + cookies，字幕提取默认关闭）
-- 小红书：收藏 + 点赞（x-s 签名直连，分页全量）
-- MakerWorld：收藏 + 点赞（可选开关，Cloudflare 持久化会话）
-- 小黑盒：帖子收藏全量（浏览器驱动，失效内容保留并标记）
-
-初始同步按 PRD v4.2 拉取所有收藏的标题 / URL / 封面（轻量元数据）；完整详情按需执行。
-
-### 本地知识管理
-
-- 收藏列表：纯文字 / 卡片缩略图双视图，平台 / 类型 / 状态 / 优先级过滤
-- 内容预览：B站 / YouTube 官方嵌入播放器、正文按需抓取（不落盘）、评论展示
-- 整理工作流：未整理 → 已查看 → 已整理 → 已归档；优先级（普通/重要/项目/知识）
-- 稍后再看独立处理：转收藏 / 归档完成
-- 手动 Tag / Topic + 批量操作（批量 Tag / Topic / 优先级 / 整理 / 转收藏 / 归档）
-- Tag Atlas：平台标签自动提取、别名系统、疑似重复一键合并、Tag/Topic 聚合页接入官方关系图谱（双链）
-- Related Collections：同 ContentGroup 或同实体跨平台关联
-- 本地文件：多目录扫描（.md / .pdf），按系统区 URL 自动关联收藏；自动 / 手动扫描
-- Markdown 协议：系统区（Engine 自动写入）与用户区（永不覆盖）隔离，Dataview 模板
-
-### AI（可选，默认关闭）
-
-- 批处理队列（单批 ≤100 条，input_hash 去重，失败隔离）
-- Suggestion 审核机制：AI 只生成建议，用户确认后才写入
-- 功能级开关：Tag / Topic / 摘要可分别启用，每日调用上限（默认 50）
-- **Manual 模式（PRD 19.3）**：复制提示词模板到任意 AI 工具，粘贴回复自动解析为建议；支持批量打包 N 条收藏一次处理
-- Provider：DeepSeek / OpenAI（OpenAI 兼容接口）
-
-### 同步计划与规则中心
-
-- 各平台自动同步频率（每日 / 每周）、随机执行窗口、单日同步上限（总开关默认关闭）
-- 规则中心：全部业务规则统一查看 / 修改 / 恢复默认，带变更记录
-- 平台健康指示灯（绿 / 黄 / 红 + 原因）与异常内容统计（下架 / 同步失败 / 文件丢失）
-
-## 架构
-
-```
-Obsidian Plugin (apps/obsidian-plugin)
-   └── 本地 Socket / WebSocket 通信 (packages/shared-core 协议)
-         └── 独立 Engine (apps/engine, Node.js)
-               ├── Adapters (packages/adapters): 五平台采集
-               ├── AI Queue (packages/ai): 批处理 / 建议
-               ├── SQLite (packages/database): 收藏 / 评论 / 建议 / 分组 / 文件索引
-               └── ContentGroup / FileIndex / Scheduler
-```
-
-Cookie 只保存在本地数据目录（AES-256-GCM 加密，`data/cookies/*.enc`），不上传。
-
-## 安装
-
-### 平台登录 / Cookie 设置（必读）
+[Get started](#installation) · [Features](#features) · [Privacy and limitations](#privacy-and-limitations) · [Report an issue](https://github.com/simonemuller6127-png/omni-collector/issues)
 
 > [!IMPORTANT]
-> **The plugin cannot log you in.** You must log in to each platform in your own browser first, then import the cookies into the plugin.
+> This is an early-stage **desktop-only** plugin with a **required local Node.js engine**. Installing the three plugin files alone does not complete setup. AI is optional and off by default.
+>
+> This guide describes release **0.9.0**. The default branch's application code may be older; use the release assets and matching source tag, not the root `main.js`, for installation.
 
-1. Install the **Cookie-Editor** browser extension (search it in the Chrome or Edge extension store).
-2. Log in to the platform in your browser (e.g. https://www.bilibili.com or https://www.xiaohongshu.com).
-3. On the logged-in page, open Cookie-Editor → **Export** → **Copy as JSON**.
-4. Open Obsidian → Omni Collector settings → **Platform Cookie** → pick the platform → paste the JSON → click **Import**.
-5. Run the sync from the Omni Collector sidebar.
+## Why Omni Collector?
 
-> Both Cookie-Editor JSON arrays and `k=v; k2=v2` header strings are accepted. Cookies are encrypted and stored only in your local data directory (`data/cookies/*.enc`); they are never uploaded.
+A tutorial on Bilibili, a reference on Xiaohongshu, and a guide on Xiaoheihe may all belong to the same project. Instead of searching each platform separately:
 
-> [!IMPORTANT] 中文版
-> 插件无法代替你登录。请先在浏览器里登录平台，再用 **Cookie-Editor** 扩展导出 Cookie 后导入插件：
-> ① 安装浏览器扩展 Cookie-Editor（Chrome / Edge 商店搜索）→ ② 浏览器登录平台（如 bilibili.com / xiaohongshu.com）→ ③ 在登录页点 Cookie-Editor 图标 → Export → Copy as JSON → ④ Obsidian → Omni Collector 设置 → 「平台 Cookie」→ 选择平台 → 粘贴 JSON → 点「导入」→ ⑤ 回侧边栏同步。
-> 支持 JSON 数组和 `SESSDATA=xxx; bili_jct=yyy` 字符串格式；Cookie 只加密保存在本地 `data/cookies/*.enc`，绝不上传。
+1. **Collect:** sync the titles, source links and covers of your saved items.
+2. **Find:** search across platforms and filter by status, priority, tag or topic.
+3. **Connect:** group related items into a topic and link them to your own Obsidian notes.
+4. **Revisit:** use review and overdue reminders to return to items you saved for later.
 
-### 通过 BRAT（推荐，正式上架前）
+This is a library of saved references, **not a complete offline archive of every original post or video**.
 
-1. 安装 [BRAT](https://obsidian.md/plugins?id=obsidian42-brat)
-2. 添加仓库：`simonemuller6127-png/omni-collector`
+## Supported platforms
 
-### 手动安装
+| Platform | Collection scope |
+| --- | --- |
+| Bilibili | Favorite folders and Watch Later |
+| YouTube | Liked videos; requires yt-dlp and separate cookie-file setup |
+| Xiaohongshu | Favorites and likes |
+| MakerWorld | Favorites and optional likes |
+| Xiaoheihe | Saved posts; unavailable items are retained and marked |
 
-1. 从 GitHub Releases 下载 `main.js` / `manifest.json` / `styles.css` 三个文件
-2. 放入 `<你的库>/.obsidian/plugins/omni-collector/`（目录不存在则新建）
-3. Obsidian 设置 → 第三方插件 → 启用 Omni Collector
-4. 在插件设置中填写数据目录 / Node.js 路径 / Engine 路径
+Initial sync collects lightweight metadata: titles, URLs and covers. Details are retrieved on demand where supported. Availability depends on platform changes, permissions and a valid login session; not all platforms support the same detail fields.
 
-## 开发
+## Features
+
+### Find and organize
+
+- Text and thumbnail-card views, keyword search, filters and bulk link copying.
+- Smart views for unorganized items, recent additions, high-priority items, rated items and Watch Later.
+- Organization states, priorities, 1–5 star ratings, selected comments and bulk operations.
+- Theme-aware cards with platform colors and status indicators.
+- Embedded Bilibili / YouTube players and on-demand content previews where supported.
+
+### Connect your knowledge
+
+- **Tag Atlas:** extracted platform tags, aliases and duplicate-tag merging.
+- **Topics:** hub notes with wikilinks and Dataview indexes; topic merging and renaming.
+- **Series:** automatic recognition plus manual membership and progress tracking.
+- Related items through content groups, shared entities and optional local TF-IDF similarity.
+- Index local Markdown / PDF files and link them to saved items by source URL. Optional file-hash tracking helps recover moved-file associations.
+- Separate generated and user-written Markdown sections so updates preserve your own notes.
+
+### Optional AI assistance
+
+- Suggestions for tags, topics, groups and summaries, **reviewed by you before application**.
+- Manual mode: copy a single-item or batch prompt into your chosen AI tool, then paste the response back for review. No API key is required by the plugin in this mode.
+- Existing tags and topics guide manual prompts toward consistent naming.
+- API mode supports DeepSeek and OpenAI-compatible services, with feature switches and daily limits.
+
+### Keep the library useful
+
+- Daily review, overdue reminders and a separate Watch Later workflow.
+- Per-platform sync schedules, daily limits and a rule center; automatic scheduling is off by default.
+- Platform health indicators and counts for unavailable items, sync failures and missing files.
+
+## Installation
+
+### 1. Check requirements
+
+- Obsidian **desktop 1.5.0+**. This is not a mobile plugin.
+- Git, **Node.js 24 LTS (24.12+)** and **pnpm 9** for the source-based engine setup below. The locked dependencies require a newer Node version than the repository's older `>=20` declaration suggests.
+- Playwright Chromium for browser-backed features; yt-dlp separately if using YouTube.
+- An account with access to the saved items on each platform you enable.
+
+The current deployment script uses local dependency junctions. Keep the source checkout and its `node_modules` on the same machine; the deployed engine directory is **not a portable standalone package**. The steps below include Windows path examples; other operating systems have not been verified by this documentation update.
+
+### 2. Install the plugin
+
+**BRAT:** install [BRAT](https://obsidian.md/plugins?id=obsidian42-brat), add `simonemuller6127-png/omni-collector`, and select release `0.9.0` when prompted for a version. Verify that the installed plugin version matches your engine source.
+
+**Manual:** download `main.js`, `manifest.json` and `styles.css` from the [0.9.0 release](https://github.com/simonemuller6127-png/omni-collector/releases/tag/0.9.0). Place all three in `<vault>/.obsidian/plugins/omni-collector/`, then enable the plugin in Obsidian's community plugin settings.
+
+Open its settings once to initialize saved settings, then close Obsidian before the configuration step below. The release assets contain the plugin only, not the engine or its dependencies.
+
+### 3. Build and deploy the matching engine
+
+Run in a terminal. Use a new checkout directory; do not switch branches in a checkout containing work you need to preserve.
 
 ```bash
-pnpm install
+git clone --branch 0.9.0 --depth 1 https://github.com/simonemuller6127-png/omni-collector.git omni-collector-0.9.0
+cd omni-collector-0.9.0
+pnpm install --frozen-lockfile
+pnpm build
+pnpm --filter @omni/engine exec playwright install chromium
+node apps/engine/scripts/deploy.mjs --data-dir "<absolute-data-directory>"
+```
+
+Replace `<absolute-data-directory>` with your own local directory, for example `D:/OmniCollectorData`. Build before deploying. Chromium must be installed for the OS account that runs Obsidian; Linux may also need Playwright system dependencies.
+
+### 4. Point the plugin at the engine
+
+In 0.9.0, the data-directory and engine-script fields are stored settings, **not controls in the settings UI**. With Obsidian closed, back up `<vault>/.obsidian/plugins/omni-collector/data.json`, then update these fields while preserving all other settings:
+
+```json
+{
+  "dataDir": "D:/OmniCollectorData",
+  "engineScript": "D:/OmniCollectorData/engine/engine.cjs",
+  "nodeBin": "C:/Program Files/nodejs/node.exe"
+}
+```
+
+This is a field example, **not a replacement for the entire file**. Use your real absolute paths and valid JSON. Deployment creates `engine.cjs`, whereas the plugin's initial default points to `index.js`; these must be aligned. Set an explicit Node executable path rather than leaving it blank.
+
+Reopen Obsidian and start the engine from the Omni Collector sidebar. The plugin can launch the local engine itself once setup is complete.
+
+### 5. Sign in and sync
+
+In plugin settings, select a platform under the cookie section and open its **login window**. Sign in yourself on the platform page; the engine captures the resulting session locally. Alternatively, import Cookie-Editor JSON or a `k=v; k2=v2` cookie string. Never send cookies to the project author or include them in an issue.
+
+Start with one platform and confirm that the engine connects, sync finishes, and a saved item's source link opens correctly before enabling schedules.
+
+**YouTube has an extra requirement:** install yt-dlp separately and make it available to the engine. Version 0.9.0 reads `<dataDir>/ytdl_cookies.txt` in yt-dlp's Netscape cookie-file format; generic cookie import does not automatically create this file. Treat it as a sensitive plaintext credential file. Consult [yt-dlp's documentation](https://github.com/yt-dlp/yt-dlp#readme) for installation and cookie-file requirements.
+
+## Privacy and limitations
+
+- The library and engine data are stored locally. Requests to source platforms still use your login session; “local” does not mean “offline.”
+- Cookies managed by the cookie store are encrypted with AES-256-GCM under `<dataDir>/cookies/*.enc`. Browser profiles and the separate yt-dlp cookie file are also sensitive; do not assume every session file has the same encryption protection.
+- Optional API-based AI sends the content being processed to your configured provider. Manual mode shares whichever content you paste into an external AI tool. Review it first.
+- Sync is not a guarantee of permanent full-text or video preservation. Deleted content, expired sessions and platform changes can affect results.
+- Use only your own account or content you are authorized to access, and follow each platform's terms and applicable content rights. This project is not affiliated with the supported platforms.
+- Back up your vault before large sync or organization operations. Keep engine databases, cookies, browser profiles and plugin credentials out of public repositories and shared sync folders.
+
+## Works with Obsidian
+
+Generated notes use frontmatter tags and wikilinks. Dataview can render dynamic indexes; Breadcrumbs can support your own topic hierarchy. Prefer the plugin's Tag Atlas for renaming or merging tags to keep its database and notes aligned.
+
+You can sync generated notes using your preferred vault-sync tool. Keep each device's engine data and credentials separate. Other Obsidian plugins have their own privacy behavior and configuration requirements.
+
+## Architecture and development
+
+```text
+Obsidian desktop plugin
+  └── Local IPC / WebSocket
+        └── Node.js engine
+              ├── Platform adapters
+              ├── Optional AI suggestion queue
+              ├── SQLite library and local file index
+              └── Markdown generation and sync scheduler
+```
+
+The plugin lives in `apps/obsidian-plugin`, the engine in `apps/engine`, and shared packages in `packages/`. For development, use the `dev` branch; for a reproducible release setup, use the matching tag as above.
+
+```bash
+pnpm install --frozen-lockfile
 pnpm build
 pnpm test
 ```
 
-部署 Engine：
+## Feedback and support
 
-```bash
-node apps/engine/scripts/deploy.mjs --data-dir <你的数据目录>
-```
+[Open an issue](https://github.com/simonemuller6127-png/omni-collector/issues) with your plugin version, operating system, affected platform, expected behavior and sanitized reproduction steps. Remove cookies, tokens, login QR codes and personal information from logs and screenshots.
+
+If Omni Collector helps you rediscover your saved items, a star or a real-world workflow write-up helps others find the project. Bug reports, documentation improvements and translations are welcome too.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=simonemuller6127-png/omni-collector&type=Date)](https://star-history.com/#simonemuller6127-png/omni-collector&Date)
+
+The chart is provided by Star History and may be cached. [Open the interactive chart](https://star-history.com/#simonemuller6127-png/omni-collector&Date) if the image does not load.
 
 ## License
 
-MIT
+[MIT](LICENSE)
