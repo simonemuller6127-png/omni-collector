@@ -1,6 +1,6 @@
 # Omni Collector
 
-[English](README.md) · **简体中文**
+**English** · [简体中文](README.md)
 
 **Turn scattered favorites into a searchable library in Obsidian.**
 
