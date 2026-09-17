@@ -1,6 +1,6 @@
 # Omni Collector
 
-**English** · [简体中文](README.zh-CN.md)
+[English](README.en.md) · **简体中文**
 
 **把散落在各个平台的收藏，变成 Obsidian 里找得到的资料库。**
 
