@@ -40,7 +40,8 @@ export class UserRepository {
     return this.getNote(collectionId) as UserNoteRow;
   }
 
-  setRating(collectionId: string, rating: number): UserNoteRow {
+  /** 用户区评分同步副本（PRD 29.2）；null 表示清除评分。 */
+  setRating(collectionId: string, rating: number | null): UserNoteRow {
     const stamp = new Date().toISOString();
     this.db
       .prepare(

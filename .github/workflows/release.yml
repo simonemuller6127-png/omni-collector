@@ -45,6 +45,18 @@ jobs:
           cp apps/obsidian-plugin/manifest.json release/manifest.json
           cp apps/obsidian-plugin/styles.css release/styles.css
 
+      # 防呆：0.9.0 曾发出 manifest 版本停在 0.5.3 的错误产物。
+      # 打 tag 前必须同步 apps/obsidian-plugin/manifest.json 与 versions.json。
+      - name: Verify tag matches shipped manifest version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(node -p "require('./release/manifest.json').version")
+          echo "tag=$tag shipped_manifest_version=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' 与打包出的 manifest 版本 '$version' 不一致；请先更新 apps/obsidian-plugin/manifest.json 与 versions.json 再打 tag。"
+            exit 1
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:

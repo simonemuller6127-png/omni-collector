@@ -1,6 +1,6 @@
 import { App, ItemView, Modal, Notice, Setting, WorkspaceLeaf } from "obsidian";
 import type { CollectionDTO } from "@omni/shared-core";
-import { filterCollections, nextOrganizeState, type CollectionFilter } from "./helpers.js";
+import { filterCollections, nextOrganizeState, platformMeta, VIEW_PRESETS, withDeletedLast, type CollectionFilter } from "./helpers.js";
 
 export const VIEW_TYPE_OMNI_LIST = "omni-collector-list";
 
@@ -10,11 +10,14 @@ export interface ListDataSource {
   onOpenDetail(collectionId: string): void;
   onBatch(ids: string[], action: "tag" | "topic" | "priority" | "organize" | "convert", value: string): Promise<void>;
   getDefaultViewMode(): "list" | "card";
+  getCardLayout(): "flat" | "waterfall";
+  setCardLayout(layout: "flat" | "waterfall"): void;
   onOrganize(collectionId: string, state: CollectionDTO["organizeStatus"]): Promise<void>;
   onTag(collectionId: string, tag: string): Promise<void>;
   onTopic(collectionId: string, topic: string): Promise<void>;
   onPriority(collectionId: string, priority: CollectionDTO["priority"]): Promise<void>;
   onConvert(collectionId: string, to: "favorited" | "archived"): Promise<void>;
+  onRating(collectionId: string, rating: number): Promise<void>;
   ensureCover(url: string): Promise<string | null>;
   openLocalFile(filePath: string): void;
 }
@@ -83,17 +86,24 @@ class PromptModal extends Modal {
 export class OmniCollectionListView extends ItemView {
   private items: CollectionDTO[] = [];
   private localFiles: Array<{ file_path: string; file_name: string; file_type: string | null; linked_collection_id: string | null; linked_title: string | null }> = [];
-  private statusFilter: "all" | "unorganized" | "organized" | "archived" = "all";
+  private statusFilter: "all" | CollectionDTO["organizeStatus"] = "all";
   private saveTypeFilter: "all" | "favorited" | "watch_later" | "liked" = "all";
   private priorityFilter: "all" | CollectionDTO["priority"] = "all";
   private platformFilter: string | null = null;
+  private searchQuery = "";
+  private sortByRating = false;
+  private ratedOnly = false;
+  private recentDays = 0;
+  private activePreset = "all";
   private mode: "collections" | "local" = "collections";
   private viewMode: "list" | "card" = "list";
+  private cardLayout: "flat" | "waterfall" = "flat";
   private coverCache = new Map<string, string>();
   private selecting = false;
   private readonly selected = new Set<string>();
   private listEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
+  private presetsEl!: HTMLElement;
   private batchBarEl!: HTMLElement;
   private totalEl!: HTMLElement;
 
@@ -112,6 +122,11 @@ export class OmniCollectionListView extends ItemView {
     return "Omni Collector 收藏";
   }
 
+  /** 视图标识图标：收藏列表用「库」，与主控台/详情/AI 审核区分。 */
+  getIcon(): string {
+    return "library";
+  }
+
   getState(): Record<string, unknown> {
     return { platform: this.platformFilter };
   }
@@ -125,12 +140,14 @@ export class OmniCollectionListView extends ItemView {
     const initial = (this.getState().platform as string | null) ?? null;
     this.platformFilter = initial;
     this.viewMode = this.source.getDefaultViewMode();
+    this.cardLayout = this.source.getCardLayout();
     const container = this.containerEl.children[1];
     container.empty();
     container.addClass("omni-list-view");
     container.createEl("div", { text: "Omni Collector 收藏", cls: "omni-panel-title" });
     this.totalEl = container.createEl("div", { cls: "omni-total" });
     this.toolbarEl = container.createEl("div", { cls: "omni-toolbar" });
+    this.presetsEl = container.createEl("div", { cls: "omni-preset-bar" });
     this.batchBarEl = container.createEl("div", { cls: "omni-batch-bar" });
     this.batchBarEl.addClass("is-hidden");
     this.listEl = container.createEl("div", { cls: "omni-list" });
@@ -140,6 +157,19 @@ export class OmniCollectionListView extends ItemView {
   private renderToolbar(): void {
     const tb = this.toolbarEl;
     tb.empty();
+    // 智能视图高亮随当前过滤状态推导（借鉴 Eagle Smart Folders 的"当前视图"概念）
+    const preset = VIEW_PRESETS.find((p) => p.key === this.activePreset);
+    if (
+      preset &&
+      (this.statusFilter !== (preset.filters.status ?? "all") ||
+        this.priorityFilter !== (preset.filters.priority ?? "all") ||
+        this.ratedOnly !== (preset.filters.ratedOnly ?? false) ||
+        this.recentDays !== (preset.filters.recentDays ?? 0) ||
+        (preset.key !== "watchLater" && this.saveTypeFilter !== "all"))
+    ) {
+      this.activePreset = "";
+    }
+    this.renderPresetBar();
     tb.createEl('button', { text: this.mode === 'collections' ? '收藏' : '收藏', cls: `omni-chip${this.mode === 'collections' ? ' omni-chip-active' : ''}` })
       .addEventListener('click', () => { this.mode = 'collections'; this.renderToolbar(); void this.renderList(); });
     tb.createEl('button', { text: '本地文件', cls: `omni-chip${this.mode === 'local' ? ' omni-chip-active' : ''}` })
@@ -176,12 +206,32 @@ export class OmniCollectionListView extends ItemView {
         tb.createEl('button', { text: p.label, cls: `omni-chip${this.priorityFilter === p.key ? ' omni-chip-active' : ''}` })
           .addEventListener('click', () => { this.priorityFilter = p.key; this.renderToolbar(); void this.renderList(); });
       }
+      tb.createEl('span', { text: '｜', cls: 'omni-toolbar-sep' });
+      tb.createEl('button', { text: '按评分排序', cls: `omni-chip${this.sortByRating ? ' omni-chip-active' : ''}` })
+        .addEventListener('click', () => { this.sortByRating = !this.sortByRating; this.renderToolbar(); void this.renderList(); });
+      tb.createEl('span', { text: '｜', cls: 'omni-toolbar-sep' });
+      const search = tb.createEl('input', {
+        type: 'text',
+        placeholder: '搜索 标题/作者/简介/Tag/Topic…',
+        cls: 'omni-search-input',
+        attr: { value: this.searchQuery },
+      });
+      search.addEventListener('input', () => { this.searchQuery = search.value; void this.renderList(); });
     }
     tb.createEl('button', { text: '刷新', cls: 'omni-chip omni-chip-refresh' })
       .addEventListener('click', () => { void this.refreshList(); });
     if (this.mode === 'collections') {
     tb.createEl('button', { text: this.viewMode === 'list' ? '切换卡片视图' : '切换列表视图', cls: 'omni-chip' })
       .addEventListener('click', () => { this.viewMode = this.viewMode === 'list' ? 'card' : 'list'; this.renderToolbar(); void this.renderList(); });
+    if (this.viewMode === 'card') {
+      tb.createEl('button', { text: this.cardLayout === 'waterfall' ? '切换平铺' : '切换瀑布流', cls: `omni-chip${this.cardLayout === 'waterfall' ? ' omni-chip-active' : ''}` })
+        .addEventListener('click', () => {
+          this.cardLayout = this.cardLayout === 'waterfall' ? 'flat' : 'waterfall';
+          this.source.setCardLayout(this.cardLayout);
+          this.renderToolbar();
+          void this.renderList();
+        });
+    }
     if (this.mode === 'collections') {
       tb.createEl('button', { text: this.selecting ? '完成选择' : '批量选择', cls: `omni-chip${this.selecting ? ' omni-chip-active' : ''}` })
         .addEventListener('click', () => {
@@ -193,6 +243,41 @@ export class OmniCollectionListView extends ItemView {
         });
     }
   }
+  }
+
+  private renderPresetBar(): void {
+    if (!this.presetsEl) return;
+    this.presetsEl.empty();
+    if (this.mode !== "collections") {
+      this.presetsEl.addClass("is-hidden");
+      return;
+    }
+    this.presetsEl.removeClass("is-hidden");
+    for (const p of VIEW_PRESETS) {
+      this.presetsEl
+        .createEl("button", { text: p.label, cls: `omni-chip${this.activePreset === p.key ? " omni-chip-active" : ""}` })
+        .addEventListener("click", () => this.applyPreset(p.key));
+    }
+  }
+
+  private applyPreset(key: string): void {
+    const preset = VIEW_PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    this.activePreset = key;
+    this.statusFilter = preset.filters.status ?? "all";
+    this.priorityFilter = preset.filters.priority ?? "all";
+    this.ratedOnly = preset.filters.ratedOnly ?? false;
+    this.recentDays = preset.filters.recentDays ?? 0;
+    this.saveTypeFilter = key === "watchLater" ? "watch_later" : "all";
+    this.renderToolbar();
+    void this.renderList();
+  }
+
+  private platformBadge(parent: HTMLElement, platform: string): HTMLElement {
+    const m = platformMeta(platform);
+    const b = parent.createEl("span", { text: m.label, cls: "omni-badge omni-badge-platform" });
+    b.style.setProperty("--omni-platform", m.color);
+    return b;
   }
 
   private async refreshList(): Promise<void> {
@@ -230,19 +315,39 @@ export class OmniCollectionListView extends ItemView {
     else if (this.statusFilter === 'organized') filter.status = 'organized';
     else if (this.statusFilter === 'archived') filter.status = 'archived';
     if (this.priorityFilter !== 'all') filter.priority = this.priorityFilter;
+    if (this.searchQuery.trim()) filter.keyword = this.searchQuery;
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== 'all') items = items.filter((i) => i.saveType === this.saveTypeFilter);
-
+    if (this.sortByRating) {
+      // 评分排序（PRD 29.2：user_rating 参与排序）；未评分排最后，同分按收藏时间倒序；失效内容始终沉底
+      items = [...items].sort(
+        withDeletedLast((a, b) => {
+          const ra = a.rating ?? 0;
+          const rb = b.rating ?? 0;
+          return rb - ra || new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime();
+        }),
+      );
+    }
+    if (this.ratedOnly) items = items.filter((i) => !!i.rating);
+    if (this.recentDays > 0) {
+      const cutoff = Date.now() - this.recentDays * 86_400_000;
+      items = items.filter((i) => new Date(i.collectedAt).getTime() >= cutoff);
+    }
     this.totalEl.setText(`共 ${this.items.length} 条收藏${this.platformFilter ? `（${PLATFORMS.find((p) => p.key === this.platformFilter)?.label ?? this.platformFilter}）` : ''}，当前显示 ${items.length} 条`);
     if (items.length === 0) {
       this.listEl.createEl('div', { text: '暂无收藏（到侧边栏点「同步全部平台」）', cls: 'omni-empty' });
       return;
     }
     if (this.viewMode === 'card') {
-      const grid = this.listEl.createEl('div', { cls: 'omni-card-grid' });
+      const grid = this.listEl.createEl('div', {
+        cls: this.cardLayout === 'waterfall' ? 'omni-card-grid omni-card-waterfall' : 'omni-card-grid',
+      });
       for (const item of items) {
+        const m = platformMeta(item.platform);
         const card = grid.createEl('div', { cls: 'omni-card' });
+        card.style.setProperty('--omni-platform', m.color);
+        if (item.contentStatus === 'deleted') card.addClass('omni-card-deleted');
         const imgBox = card.createEl('div', { cls: 'omni-card-cover-wrap' });
         if (item.coverUrl) {
           imgBox.createEl('img', { cls: 'omni-card-cover', attr: { referrerpolicy: 'no-referrer', loading: 'lazy' } });
@@ -251,12 +356,20 @@ export class OmniCollectionListView extends ItemView {
             if (img && src) img.setAttribute('src', src);
           });
         } else {
-          imgBox.createEl('div', { cls: 'omni-card-cover omni-card-cover-empty' });
+          imgBox.createEl('div', { cls: 'omni-card-cover omni-card-cover-empty' }).createEl('span', { text: m.label });
         }
+        // 覆盖式状态角标（收纳速览：一眼看清整理状态 / 类型 / 评分）
+        const flags = imgBox.createEl('div', { cls: 'omni-card-flags' });
+        if (item.contentStatus === 'deleted') flags.createEl('span', { text: '失效', cls: 'omni-flag omni-flag-danger' });
+        else if (item.organizeStatus === 'archived') flags.createEl('span', { text: '已归档', cls: 'omni-flag' });
+        else if (item.organizeStatus === 'unorganized') flags.createEl('span', { text: '待整理', cls: 'omni-flag omni-flag-warn' });
+        if (item.saveType === 'watch_later') flags.createEl('span', { text: '稍后', cls: 'omni-flag omni-flag-info' });
+        if (item.rating) flags.createEl('span', { text: `★${item.rating}`, cls: 'omni-flag omni-flag-star' });
         card.createEl('div', { text: item.title || item.platformItemId, cls: 'omni-card-title' });
         const meta = card.createEl('div', { cls: 'omni-row-meta' });
-        meta.createEl('span', { text: PLATFORMS.find((p) => p.key === item.platform)?.label ?? item.platform, cls: 'omni-badge omni-badge-platform' });
+        this.platformBadge(meta, item.platform);
         meta.createEl('span', { text: item.saveType === 'liked' ? '点赞' : item.saveType === 'watch_later' ? '稍后再看' : '收藏', cls: 'omni-badge' });
+        if (item.groupName) meta.createEl('span', { text: `组:${item.groupName}`, cls: 'omni-badge omni-badge-group' });
         card.addEventListener('click', () => this.source.onOpenDetail(item.id));
       }
       return;
@@ -276,13 +389,14 @@ export class OmniCollectionListView extends ItemView {
       main.createEl('a', { text: item.title || item.platformItemId, href: item.url, cls: 'omni-title' });
       main.addEventListener('click', () => this.source.onOpenDetail(item.id));
       const meta = main.createEl('div', { cls: 'omni-row-meta' });
-      meta.createEl('span', { text: PLATFORMS.find((p) => p.key === item.platform)?.label ?? item.platform, cls: 'omni-badge omni-badge-platform' });
+      this.platformBadge(meta, item.platform);
       meta.createEl('span', { text: item.saveType === 'liked' ? '点赞' : item.saveType === 'watch_later' ? '稍后再看' : '收藏', cls: 'omni-badge' });
       if (item.contentStatus === "deleted") {
         meta.createEl('span', { text: '失效', cls: 'omni-badge omni-badge-deleted' });
         row.addClass("omni-row-deleted");
       }
       meta.createEl('span', { text: PRIORITIES.find((p) => p.key === item.priority)?.label ?? item.priority, cls: 'omni-badge omni-badge-priority' });
+      if (item.rating) meta.createEl('span', { text: `★${item.rating}`, cls: 'omni-badge omni-badge-rating' });
       if (item.groupName) meta.createEl('span', { text: `组:${item.groupName}`, cls: 'omni-badge omni-badge-group' });
       for (const t of item.tags ?? []) meta.createEl('span', { text: `#${t}`, cls: 'omni-badge omni-badge-tag' });
       for (const t of item.topics ?? []) meta.createEl('span', { text: `◎${t}`, cls: 'omni-badge omni-badge-topic' });
@@ -380,6 +494,7 @@ export class OmniCollectionListView extends ItemView {
     else if (this.statusFilter === "organized") filter.status = "organized";
     else if (this.statusFilter === "archived") filter.status = "archived";
     if (this.priorityFilter !== "all") filter.priority = this.priorityFilter;
+    if (this.searchQuery.trim()) filter.keyword = this.searchQuery;
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== "all") items = items.filter((i) => i.saveType === this.saveTypeFilter);
@@ -404,6 +519,17 @@ export class OmniCollectionListView extends ItemView {
       this.selected.clear();
       this.renderBatchBar();
       void this.renderList();
+    });
+    bar.createEl("button", { text: "复制链接", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+      const urls = this.items.filter((i) => this.selected.has(i.id)).map((i) => i.url);
+      if (urls.length === 0) {
+        new Notice("请先勾选收藏");
+        return;
+      }
+      void navigator.clipboard
+        .writeText(urls.join("\n"))
+        .then(() => new Notice(`已复制 ${urls.length} 条链接`))
+        .catch((e) => new Notice(`复制失败：${(e as Error).message}`));
     });
     bar.createEl("button", { text: "批量 Tag", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("tag"));
     bar.createEl("button", { text: "批量 Topic", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("topic"));

@@ -49,7 +49,7 @@ describe("FileIndexer enhanced (OMNI_SYSTEM link)", () => {
 
     const files = new FileRepository(db);
     const indexer = new FileIndexer(files, (url) => new CollectionRepository(db).findByUrl(url)?.id);
-    const report = indexer.scan(folder, true);
+    const report = indexer.scan(folder, { enhanced: true, hashing: true });
     expect(report.errors).toEqual([]);
     expect(report.indexed).toBe(1);
     const row = files.queryByPath(path.join(folder, "AI 编程实战.md"));

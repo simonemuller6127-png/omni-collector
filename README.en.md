@@ -15,7 +15,7 @@ Sync saved items from **Bilibili, YouTube, Xiaohongshu, MakerWorld and Xiaoheihe
 > [!IMPORTANT]
 > This is an early-stage **desktop-only** plugin with a **required local Node.js engine**. Installing the three plugin files alone does not complete setup. AI is optional and off by default.
 >
-> This guide describes release **0.9.0**. The default branch's application code may be older; use the release assets and matching source tag, not the root `main.js`, for installation.
+> This guide describes release **0.10.0**. The default branch's application code may be older; use the release assets and matching source tag, not the root `main.js`, for installation.
 
 ## Why Omni Collector?
 
@@ -85,9 +85,9 @@ The current deployment script uses local dependency junctions. Keep the source c
 
 ### 2. Install the plugin
 
-**BRAT:** install [BRAT](https://obsidian.md/plugins?id=obsidian42-brat), add `simonemuller6127-png/omni-collector`, and select release `0.9.0` when prompted for a version. Verify that the installed plugin version matches your engine source.
+**BRAT:** install [BRAT](https://obsidian.md/plugins?id=obsidian42-brat), add `simonemuller6127-png/omni-collector`, and select release `0.10.0` when prompted for a version. Verify that the installed plugin version matches your engine source.
 
-**Manual:** download `main.js`, `manifest.json` and `styles.css` from the [0.9.0 release](https://github.com/simonemuller6127-png/omni-collector/releases/tag/0.9.0). Place all three in `<vault>/.obsidian/plugins/omni-collector/`, then enable the plugin in Obsidian's community plugin settings.
+**Manual:** download `main.js`, `manifest.json` and `styles.css` from the [0.10.0 release](https://github.com/simonemuller6127-png/omni-collector/releases/tag/0.10.0). Place all three in `<vault>/.obsidian/plugins/omni-collector/`, then enable the plugin in Obsidian's community plugin settings.
 
 Open its settings once to initialize saved settings, then close Obsidian before the configuration step below. The release assets contain the plugin only, not the engine or its dependencies.
 
@@ -96,8 +96,8 @@ Open its settings once to initialize saved settings, then close Obsidian before 
 Run in a terminal. Use a new checkout directory; do not switch branches in a checkout containing work you need to preserve.
 
 ```bash
-git clone --branch 0.9.0 --depth 1 https://github.com/simonemuller6127-png/omni-collector.git omni-collector-0.9.0
-cd omni-collector-0.9.0
+git clone --branch 0.10.0 --depth 1 https://github.com/simonemuller6127-png/omni-collector.git omni-collector-0.10.0
+cd omni-collector-0.10.0
 pnpm install --frozen-lockfile
 pnpm build
 pnpm --filter @omni/engine exec playwright install chromium
@@ -108,7 +108,7 @@ Replace `<absolute-data-directory>` with your own local directory, for example `
 
 ### 4. Point the plugin at the engine
 
-In 0.9.0, the data-directory and engine-script fields are stored settings, **not controls in the settings UI**. With Obsidian closed, back up `<vault>/.obsidian/plugins/omni-collector/data.json`, then update these fields while preserving all other settings:
+In 0.10.0, the data-directory and engine-script fields are stored settings, **not controls in the settings UI**. With Obsidian closed, back up `<vault>/.obsidian/plugins/omni-collector/data.json`, then update these fields while preserving all other settings:
 
 ```json
 {
@@ -128,7 +128,7 @@ In plugin settings, select a platform under the cookie section and open its **lo
 
 Start with one platform and confirm that the engine connects, sync finishes, and a saved item's source link opens correctly before enabling schedules.
 
-**YouTube has an extra requirement:** install yt-dlp separately and make it available to the engine. Version 0.9.0 reads `<dataDir>/ytdl_cookies.txt` in yt-dlp's Netscape cookie-file format; generic cookie import does not automatically create this file. Treat it as a sensitive plaintext credential file. Consult [yt-dlp's documentation](https://github.com/yt-dlp/yt-dlp#readme) for installation and cookie-file requirements.
+**YouTube has an extra requirement:** install yt-dlp separately and make it available to the engine. Version 0.10.0 reads `<dataDir>/ytdl_cookies.txt` in yt-dlp's Netscape cookie-file format; generic cookie import does not automatically create this file. Treat it as a sensitive plaintext credential file. Consult [yt-dlp's documentation](https://github.com/yt-dlp/yt-dlp#readme) for installation and cookie-file requirements.
 
 ## Privacy and limitations
 

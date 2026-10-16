@@ -55,6 +55,14 @@ export class CommentRepository {
     this.db.prepare("UPDATE comments SET is_starred = ? WHERE id = ?").run(starred ? 1 : 0, commentId);
   }
 
+  /** 精选评论（PRD 7.3）：限定评论属于该收藏时才允许切换，返回是否存在。 */
+  setStarredInCollection(collectionId: string, commentId: string, starred: boolean): boolean {
+    const res = this.db
+      .prepare("UPDATE comments SET is_starred = ? WHERE id = ? AND collection_id = ?")
+      .run(starred ? 1 : 0, commentId, collectionId);
+    return res.changes > 0;
+  }
+
   deleteByCollection(collectionId: string): void {
     this.db.prepare("DELETE FROM comments WHERE collection_id = ?").run(collectionId);
   }

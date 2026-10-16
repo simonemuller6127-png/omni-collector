@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { OmniMessage } from "@omni/shared-core";
 import type { AIProvider } from "@omni/ai";
 import { parseBatchSuggestions, parseSuggestions, parseTagPayload } from "@omni/ai";
@@ -13,12 +14,16 @@ import {
   RuleCenter,
   TagRepository,
   TopicRepository,
+  UserRepository,
 } from "@omni/database";
 import type { CollectionDTO } from "@omni/shared-core";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
+import { findNearDuplicateTags } from "../tags/tag-utils.js";
 import { ContentGroupService, normalizeEntity } from "../group/content-group-service.js";
+import { buildSemanticIndex, semanticRelated, type SemanticDoc } from "../group/semantic-related.js";
 import { FileIndexer } from "../fileindex/file-indexer.js";
 import { BrowserSessionManager, parseStoredCookies } from "../sync/browser-session.js";
+import { runLoginWindow } from "../sync/login-window.js";
 import { CookieCipher } from "../crypto/cookie-cipher.js";
 import { XiaohongshuAdapter } from "@omni/adapters";
 import { SUPPORTED_PLATFORMS, SyncRunner } from "../sync/sync-runner.js";
@@ -84,6 +89,10 @@ export class TaskService {
       TASK_COMMENTS: (msg) => this.comments(msg),
       TASK_AI: (msg) => this.ai(msg),
       TASK_GROUP: (msg) => this.group(msg),
+      TASK_GROUP_JOIN: (msg) => this.groupJoin(msg),
+      TASK_GROUP_LEAVE: (msg) => this.groupLeave(msg),
+      TASK_GROUP_MERGE: (msg) => this.groupMerge(msg),
+      TOPIC_MERGE: (msg) => this.topicMerge(msg),
       TASK_ORGANIZE: (msg) => this.organize(msg),
       TASK_TAG: (msg) => this.tag(msg),
       TASK_TOPIC: (msg) => this.topic(msg),
@@ -94,6 +103,8 @@ export class TaskService {
       TOPIC_LIST: (msg) => this.topicList(msg),
       TOPIC_RENAME: (msg) => this.topicRename(msg),
       TASK_PRIORITY: (msg) => this.priority(msg),
+      TASK_RATING: (msg) => this.rating(msg),
+      TASK_COMMENT_STAR: (msg) => this.commentStar(msg),
       TASK_INDEX: (msg) => this.index(msg),
       TASK_FETCH: (msg) => this.fetchText(msg),
       TASK_CONVERT: (msg) => this.convert(msg),
@@ -106,6 +117,7 @@ export class TaskService {
       RULE_LIST: (msg) => this.ruleList(msg),
       COOKIE_IMPORT: (msg) => this.cookieImport(msg),
       COOKIE_STATUS: (msg) => this.cookieStatus(msg),
+      TASK_LOGIN: (msg) => this.login(msg),
       STATUS_QUERY: (msg) => this.statusQuery(msg),
     };
   }
@@ -300,6 +312,7 @@ export class TaskService {
         const groups = new ContentGroupRepository(this.db);
         const tagRepo = new TagRepository(this.db);
         const topicRepo = new TopicRepository(this.db);
+        const ratings = this.ratingMap();
         const dtos: CollectionDTO[] = collections.listAll(undefined, true).map((c) => {
           const group = groups.groupOfCollection(c.id);
           const tags = tagRepo.listTagsOfCollection(c.id).map((t) => t.name);
@@ -319,6 +332,7 @@ export class TaskService {
             syncStatus: c.sync_status,
             organizeStatus: c.organize_status,
             priority: c.priority,
+            rating: ratings.get(c.id) ?? null,
             aiStatus: (c.ai_status as CollectionDTO["aiStatus"]) ?? undefined,
             collectedAt: c.collected_at,
             lastSyncedAt: c.last_synced_at ?? undefined,
@@ -403,32 +417,60 @@ export class TaskService {
         const topicRepo = new TopicRepository(this.db);
         const comments = new CommentRepository(this.db)
           .getByCollection(id)
-          .slice(0, 3)
-          .map((c) => ({ author: c.author ?? "", content: c.content }));
+          .slice(0, 20)
+          .map((c) => ({
+            id: c.id,
+            author: c.author ?? "",
+            content: c.content,
+            likeCount: c.like_count,
+            starred: c.is_starred === 1,
+          }));
         const linkedFiles = (this.db
           .prepare("SELECT file_path FROM local_files WHERE linked_collection_id = ? ORDER BY modified_at DESC")
           .all(id) as Array<{ file_path: string }>).map((f) => f.file_path);
         const group = groups.groupOfCollection(col.id);
-        // Related Collections：同分组优先，否则同标题+同作者的跨平台启发式
-        let relatedRows = group ? groups.listCollectionsInGroup(group.id).filter((r) => r.id !== col.id) : [];
-        if (relatedRows.length === 0) {
-          relatedRows = collections
-            .listAll()
-            .filter(
-              (c) =>
-                c.id !== col.id &&
-                normalizeEntity(c.title ?? "") === normalizeEntity(col.title ?? "") &&
-                (c.author ?? "").toLowerCase() === (col.author ?? "").toLowerCase(),
-            )
-            .slice(0, 10);
+        const groupMembers = group ? groups.listCollectionsInGroup(group.id) : [];
+        const groupOrganized = groupMembers.filter(
+          (m) => m.organize_status === "organized" || m.organize_status === "archived",
+        ).length;
+        // Related Collections：同分组优先，其次同标题+同作者的跨平台启发式，最后本地语义相似（规则开关，默认关）
+        const related: Array<{ id: string; platform: string; title: string; saveType: CollectionDTO["saveType"]; contentType: string; reason?: string }> = [];
+        if (group) {
+          for (const r of groupMembers) {
+            if (r.id === col.id) continue;
+            related.push({ id: r.id, platform: r.platform, title: r.title ?? "", saveType: r.save_type as CollectionDTO["saveType"], contentType: r.content_type, reason: "同分组" });
+          }
         }
-        const related = relatedRows.slice(0, 10).map((r) => ({
-          id: r.id,
-          platform: r.platform,
-          title: r.title ?? "",
-          saveType: r.save_type,
-          contentType: r.content_type,
-        }));
+        if (related.length === 0) {
+          for (const r of collections.listAll()) {
+            if (r.id === col.id) continue;
+            if (normalizeEntity(r.title ?? "") !== normalizeEntity(col.title ?? "")) continue;
+            if ((r.author ?? "").toLowerCase() !== (col.author ?? "").toLowerCase()) continue;
+            related.push({ id: r.id, platform: r.platform, title: r.title ?? "", saveType: r.save_type as CollectionDTO["saveType"], contentType: r.content_type, reason: "同实体" });
+            if (related.length >= 10) break;
+          }
+        }
+        if (this.rules.getBool("semantic_related_enabled", false)) {
+          const seen = new Set([col.id, ...related.map((r) => r.id)]);
+          const docs: SemanticDoc[] = collections.listAll().map((c) => ({ id: c.id, title: c.title ?? "" }));
+          const tagRows = this.db
+            .prepare("SELECT ct.collection_id AS cid, t.name AS name FROM content_tags ct JOIN tags t ON t.id = ct.tag_id")
+            .all() as Array<{ cid: string; name: string }>;
+          for (const row of tagRows) {
+            const doc = docs.find((d) => d.id === row.cid);
+            if (doc) (doc.tags ??= []).push(row.name);
+          }
+          const index = buildSemanticIndex(docs);
+          for (const hit of semanticRelated(index, col.id, 5)) {
+            if (related.length >= 15) break;
+            const doc = docs.find((d) => d.id === hit.id);
+            if (!doc || seen.has(hit.id)) continue;
+            const row = collections.findById(hit.id);
+            if (!row) continue;
+            related.push({ id: row.id, platform: row.platform, title: row.title ?? "", saveType: row.save_type as CollectionDTO["saveType"], contentType: row.content_type, reason: "语义相似" });
+          }
+        }
+        const relatedLimited = related.slice(0, 15);
         const dto: CollectionDTO = {
           id: col.id,
           platform: col.platform,
@@ -444,16 +486,19 @@ export class TaskService {
           syncStatus: col.sync_status,
           organizeStatus: col.organize_status,
           priority: col.priority,
+          rating: this.ratingMap().get(col.id) ?? null,
           aiStatus: (col.ai_status as CollectionDTO["aiStatus"]) ?? undefined,
           collectedAt: col.collected_at,
           lastSyncedAt: col.last_synced_at ?? undefined,
           groupId: group?.id,
           groupName: group?.name,
+          groupSize: group ? groupMembers.length : undefined,
+          groupOrganized: group ? groupOrganized : undefined,
           tags: tagRepo.listTagsOfCollection(col.id).map((t) => t.name),
           topics: topicRepo.listTopicsOfCollection(col.id).map((t) => t.name),
           comments,
           linkedFiles,
-          related,
+          related: relatedLimited,
         };
         return complete(msg.request_id, { task: "status_query", scope, collection: dto });
       }
@@ -487,6 +532,19 @@ export class TaskService {
         const deleted = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE content_status IN ('deleted','unavailable')").get() as { n: number };
         const syncFailed = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE sync_status='failed'").get() as { n: number };
         const fileMissing = this.db.prepare("SELECT COUNT(*) AS n FROM collections WHERE content_status='file_missing'").get() as { n: number };
+        // 超期提醒（PRD 21.1 规则：待整理 14 天 / 稍后再看 30 天，均取自规则中心）
+        const unorgDays = this.rules.getNumber("unorganized_reminder_days", 14);
+        const wlDays = this.rules.getNumber("watch_later_expiry_days", 30);
+        const overdueUnorganized = this.db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM collections WHERE organize_status='unorganized' AND content_status='active' AND collected_at <= datetime('now', ?)",
+          )
+          .get(`-${Math.max(1, unorgDays)} days`) as { n: number };
+        const overdueWatchLater = this.db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM collections WHERE save_type='watch_later' AND content_status='active' AND organize_status != 'archived' AND collected_at <= datetime('now', ?)",
+          )
+          .get(`-${Math.max(1, wlDays)} days`) as { n: number };
         return complete(msg.request_id, {
           task: "status_query",
           scope,
@@ -499,6 +557,7 @@ export class TaskService {
             localFiles: localFiles.n,
             topics: topics.n,
             anomalies: { deleted: deleted.n, syncFailed: syncFailed.n, fileMissing: fileMissing.n },
+            overdue: { unorganized: overdueUnorganized.n, watchLater: overdueWatchLater.n },
           },
         });
       }
@@ -518,6 +577,8 @@ export class TaskService {
     }
     try {
       new CollectionRepository(this.db).setOrganizeState(collectionId, status as "unorganized" | "viewed" | "organized" | "archived");
+      this.recordFeedback(collectionId, "organize_status_set", { status });
+      if (status === "organized") this.recordFeedback(collectionId, "organize_completed");
       return complete(msg.request_id, { task: "organize", collection_id: collectionId, organize_status: status });
     } catch (err) {
       return error(msg.request_id, "ORG_001", `ORG_001: ${(err as Error).message}`);
@@ -559,14 +620,27 @@ export class TaskService {
     }
   }
 
-  /** Tag Atlas 列表（PRD 16.2）：名称/数量/别名。 */
+  /** Tag Atlas 列表（PRD 16.2）：名称/数量/别名 + 疑似重复（仅内容标签参与）。 */
   async tagList(msg: OmniMessage): Promise<OmniMessage> {
     try {
       const tags = new TagRepository(this.db).listTags();
-      return complete(msg.request_id, { task: "tag_list", tags });
+      const duplicateTags = this.nearDuplicateTagHints(tags.map((t) => t.name));
+      return complete(msg.request_id, { task: "tag_list", tags, duplicateTags });
     } catch (err) {
       return error(msg.request_id, "TAG_002", `TAG_002: ${(err as Error).message}`);
     }
+  }
+
+  /**
+   * 疑似重复 Tag 权威实现（findNearDuplicateTags，O(n^2)）：
+   * 阈值与截断数全部来自 business_rules，Tag 数不足阈值时直接返回空（避免小库白跑）。
+   * 形式标签只写 collections.content_type、从不进 tags 表，故此处无需额外过滤。
+   */
+  private nearDuplicateTagHints(tagNames: string[]): Array<{ a: string; b: string }> {
+    const minCount = this.rules.getNumber("ai_duplicate_tag_min_count", 20);
+    if (tagNames.length < minCount) return [];
+    const limit = Math.max(1, this.rules.getNumber("ai_duplicate_tag_report_limit", 20));
+    return findNearDuplicateTags(tagNames, limit).map((p) => ({ a: p.a, b: p.b }));
   }
 
   /** 为 Tag 添加别名（PRD 16.2）：任意别名搜索命中主 Tag 全部内容。 */
@@ -646,6 +720,25 @@ export class TaskService {
     }
   }
 
+  /** 用户区评分同步副本（user_notes.user_rating）一次载入，供 DTO 映射。 */
+  private ratingMap(): Map<string, number> {
+    const rows = this.db
+      .prepare("SELECT collection_id, user_rating FROM user_notes WHERE user_rating IS NOT NULL")
+      .all() as Array<{ collection_id: string; user_rating: number }>;
+    return new Map(rows.map((r) => [r.collection_id, r.user_rating]));
+  }
+
+  /** 用户行为事件采集（PRD 18.1 user_feedback）：失败不影响主流程。 */
+  private recordFeedback(collectionId: string, eventType: string, data?: Record<string, unknown>): void {
+    try {
+      this.db
+        .prepare("INSERT INTO user_feedback (id, collection_id, event_type, event_data) VALUES (?, ?, ?, ?)")
+        .run(randomUUID(), collectionId, eventType, data === undefined ? null : JSON.stringify(data));
+    } catch {
+      // 反馈记录失败不影响主流程
+    }
+  }
+
   /** 用户手动设置收藏优先级（普通/重要/项目/知识）。 */
   async priority(msg: OmniMessage): Promise<OmniMessage> {
     const collectionId = String(msg.payload.collection_id ?? "");
@@ -656,9 +749,170 @@ export class TaskService {
     }
     try {
       new CollectionRepository(this.db).setPriority(collectionId, priority as "normal" | "important" | "project" | "knowledge");
+      this.recordFeedback(collectionId, "priority_set", { priority });
       return complete(msg.request_id, { task: "priority", collection_id: collectionId, priority });
     } catch (err) {
       return error(msg.request_id, "PRI_001", `PRI_001: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * PRD 26.1 ②③：可视化登录窗口引导用户手动登录。
+   * 插件/引擎不接触账号密码；登录成功后自动捕获 storageState 并加密保存 Cookie（仅本地，绝不上传）。
+   * 耗时任务：连接级并发，不阻塞其他请求。
+   */
+  async login(msg: OmniMessage): Promise<OmniMessage> {
+    const platform = String(msg.payload.platform ?? "");
+    if (!SUPPORTED_PLATFORMS.includes(platform)) {
+      return error(msg.request_id, "LOGIN_001", `LOGIN_001: unsupported platform: ${platform}`);
+    }
+    const timeoutSeconds = Number(msg.payload.timeout_seconds ?? 300);
+    try {
+      const res = await runLoginWindow({ platform, dataDir: this.opts.dataDir, timeoutSeconds });
+      if (res.loggedIn) {
+        const accounts = new AccountRepository(this.db);
+        accounts.getOrCreate(platform);
+        accounts.setStatus(platform, "active");
+      }
+      return complete(msg.request_id, {
+        task: "login",
+        platform,
+        logged_in: res.loggedIn,
+        cookie_count: res.cookieCount,
+        ...(res.reason ? { reason: res.reason } : {}),
+      });
+    } catch (err) {
+      return error(msg.request_id, "LOGIN_001", `LOGIN_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 系列手动合并/拆分（PRD 24）：按名称加入分组/系列，已归属其他分组时自动迁移。 */
+  async groupJoin(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const groupName = String(msg.payload.group ?? "").trim();
+    if (!collectionId || !groupName) {
+      return error(msg.request_id, "GRP_001", "GRP_001: invalid collection_id or group name");
+    }
+    try {
+      const groups = new ContentGroupRepository(this.db);
+      const existing = groups.listGroups(2000).find((g) => g.name === groupName);
+      const group = existing ?? groups.createGroup(groupName);
+      groups.bindCollection(group.id, collectionId);
+      this.recordFeedback(collectionId, "group_joined", { group: groupName });
+      return complete(msg.request_id, { task: "group_join", collection_id: collectionId, group_id: group.id, group: group.name });
+    } catch (err) {
+      return error(msg.request_id, "GRP_001", `GRP_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 系列手动拆分：把收藏移出所在分组。 */
+  async groupLeave(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    if (!collectionId) {
+      return error(msg.request_id, "GRP_002", "GRP_002: invalid collection_id");
+    }
+    try {
+      const groups = new ContentGroupRepository(this.db);
+      const group = groups.groupOfCollection(collectionId);
+      if (!group) {
+        return error(msg.request_id, "GRP_002", "GRP_002: collection has no group");
+      }
+      groups.unbindCollection(collectionId);
+      this.recordFeedback(collectionId, "group_left", { group: group.name });
+      return complete(msg.request_id, { task: "group_leave", collection_id: collectionId, group: group.name });
+    } catch (err) {
+      return error(msg.request_id, "GRP_002", `GRP_002: ${(err as Error).message}`);
+    }
+  }
+
+  /** 系列手动合并：把 source 分组全部成员并入 target 分组并删除 source（按名称）。 */
+  async groupMerge(msg: OmniMessage): Promise<OmniMessage> {
+    const source = String(msg.payload.source ?? "").trim();
+    const target = String(msg.payload.target ?? "").trim();
+    if (!source || !target || source === target) {
+      return error(msg.request_id, "GRP_003", "GRP_003: invalid source/target group names");
+    }
+    try {
+      const groups = new ContentGroupRepository(this.db);
+      const all = groups.listGroups(2000);
+      const src = all.find((g) => g.name === source);
+      const dst = all.find((g) => g.name === target) ?? groups.createGroup(target);
+      if (!src) {
+        return error(msg.request_id, "GRP_003", "GRP_003: source group not found");
+      }
+      const members = groups.listCollectionsInGroup(src.id);
+      for (const m of members) {
+        groups.bindCollection(dst.id, m.id);
+        this.recordFeedback(m.id, "group_joined", { group: dst.name, merged_from: src.name });
+      }
+      groups.deleteGroup(src.id);
+      return complete(msg.request_id, { task: "group_merge", source: src.name, target: dst.name, moved: members.length });
+    } catch (err) {
+      return error(msg.request_id, "GRP_003", `GRP_003: ${(err as Error).message}`);
+    }
+  }
+
+  /** Topic 手动合并：source 成员并入 target 后删除 source（PRD 17 用户确认操作）。 */
+  async topicMerge(msg: OmniMessage): Promise<OmniMessage> {
+    const sourceId = String(msg.payload.source_id ?? "");
+    const targetId = String(msg.payload.target_id ?? "");
+    if (!sourceId || !targetId || sourceId === targetId) {
+      return error(msg.request_id, "TPC_001", "TPC_001: invalid source_id/target_id");
+    }
+    try {
+      const topics = new TopicRepository(this.db);
+      const src = topics.findById(sourceId);
+      const dst = topics.findById(targetId);
+      if (!src || !dst) {
+        return error(msg.request_id, "TPC_001", "TPC_001: source or target topic not found");
+      }
+      const members = (JSON.parse(src.collection_ids ?? "[]") as string[]) ?? [];
+      for (const cid of members) {
+        topics.addCollection(targetId, cid);
+      }
+      topics.deleteTopic(sourceId);
+      return complete(msg.request_id, { task: "topic_merge", source: src.name, target: dst.name, moved: members.length });
+    } catch (err) {
+      return error(msg.request_id, "TPC_001", `TPC_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 用户手动评分 1~5 星（PRD 29.2）；rating=0 表示清除。ADR-006：权威为 Markdown 用户区，本表为同步副本。 */
+  async rating(msg: OmniMessage): Promise<OmniMessage> {    const collectionId = String(msg.payload.collection_id ?? "");
+    const raw = Number(msg.payload.rating);
+    if (!collectionId || !Number.isInteger(raw) || raw < 0 || raw > 5) {
+      return error(msg.request_id, "RAT_001", "RAT_001: invalid collection_id or rating (integer 0~5)");
+    }
+    try {
+      const collections = new CollectionRepository(this.db);
+      if (!collections.findById(collectionId)) {
+        return error(msg.request_id, "RAT_002", "RAT_002: collection not found");
+      }
+      const note = new UserRepository(this.db).setRating(collectionId, raw === 0 ? null : raw);
+      this.recordFeedback(collectionId, "rating_set", { rating: note.user_rating ?? 0 });
+      return complete(msg.request_id, { task: "rating", collection_id: collectionId, rating: note.user_rating ?? null });
+    } catch (err) {
+      return error(msg.request_id, "RAT_001", `RAT_001: ${(err as Error).message}`);
+    }
+  }
+
+  /** 用户精选评论（PRD 7.3）：切换 is_starred 同步副本，写用户区由 Plugin 物化。 */
+  async commentStar(msg: OmniMessage): Promise<OmniMessage> {
+    const collectionId = String(msg.payload.collection_id ?? "");
+    const commentId = String(msg.payload.comment_id ?? "");
+    const starred = msg.payload.starred === true || msg.payload.starred === "true";
+    if (!collectionId || !commentId) {
+      return error(msg.request_id, "STAR_001", "STAR_001: invalid collection_id or comment_id");
+    }
+    try {
+      const ok = new CommentRepository(this.db).setStarredInCollection(collectionId, commentId, starred);
+      if (!ok) {
+        return error(msg.request_id, "STAR_002", "STAR_002: comment not found in collection");
+      }
+      this.recordFeedback(collectionId, "comment_starred", { comment_id: commentId, starred });
+      return complete(msg.request_id, { task: "comment_star", collection_id: collectionId, comment_id: commentId, starred });
+    } catch (err) {
+      return error(msg.request_id, "STAR_001", `STAR_001: ${(err as Error).message}`);
     }
   }
 
@@ -675,10 +929,12 @@ export class TaskService {
         this.db
           .prepare("UPDATE collections SET save_type='favorited', updated_at=? WHERE id=?")
           .run(new Date().toISOString(), collectionId);
+        this.recordFeedback(collectionId, "watch_later_converted");
       } else {
         this.db
           .prepare("UPDATE collections SET organize_status='archived', updated_at=? WHERE id=?")
           .run(new Date().toISOString(), collectionId);
+        this.recordFeedback(collectionId, "watch_later_archived");
       }
       return complete(msg.request_id, { task: "convert", collection_id: collectionId, to });
     } catch (err) {
@@ -723,15 +979,20 @@ export class TaskService {
             }
             case "priority":
               collections.setPriority(id, value as "normal" | "important" | "project" | "knowledge");
+              this.recordFeedback(id, "priority_set", { priority: value, batch: true });
               break;
             case "organize":
               collections.setOrganizeState(id, value as "unorganized" | "viewed" | "organized" | "archived");
+              this.recordFeedback(id, "organize_status_set", { status: value, batch: true });
+              if (value === "organized") this.recordFeedback(id, "organize_completed", { batch: true });
               break;
             case "convert":
               if (value === "favorited") {
                 this.db.prepare("UPDATE collections SET save_type='favorited', updated_at=? WHERE id=?").run(stamp, id);
+                this.recordFeedback(id, "watch_later_converted", { batch: true });
               } else if (value === "archived") {
                 this.db.prepare("UPDATE collections SET organize_status='archived', updated_at=? WHERE id=?").run(stamp, id);
+                this.recordFeedback(id, "watch_later_archived", { batch: true });
               } else {
                 failed += 1;
                 continue;
@@ -820,7 +1081,11 @@ export class TaskService {
       const files = new FileRepository(this.db);
       const collections = new CollectionRepository(this.db);
       const indexer = new FileIndexer(files, (url) => collections.findByUrl(url)?.id);
-      const report = indexer.scan(folder, true);
+      // 规则驱动（PRD 9.4/9.7）：增强分析与哈希追踪均默认关闭，用户在规则中心开启
+      const report = indexer.scan(folder, {
+        enhanced: this.rules.getBool("file_enhanced_analysis", false),
+        hashing: this.rules.getBool("file_hash_tracking", false),
+      });
       return complete(msg.request_id, { task: "index", folder, report });
     } catch (err) {
       return error(msg.request_id, "IDX_001", `IDX_001: ${(err as Error).message}`);
@@ -940,6 +1205,8 @@ export class TaskService {
     return (
       {
         suggested_tag: "ai_tag_accepted",
+        suggested_content_tags: "ai_content_tag_accepted",
+        suggested_content_type: "ai_content_type_accepted",
         suggested_topic: "ai_topic_accepted",
         suggested_summary: "ai_summary_accepted",
         suggested_group: "ai_group_accepted",
@@ -951,6 +1218,8 @@ export class TaskService {
     return (
       {
         suggested_tag: "ai_tag_rejected",
+        suggested_content_tags: "ai_content_tag_rejected",
+        suggested_content_type: "ai_content_type_rejected",
         suggested_topic: "ai_topic_rejected",
         suggested_summary: "ai_summary_rejected",
         suggested_group: "ai_group_rejected",
@@ -993,6 +1262,36 @@ export class TaskService {
           tagIds.push(tag.id);
         }
         return { tag_ids: tagIds };
+      }
+      case "suggested_content_tags": {
+        // 内容标签：与 suggested_tag 共用同一条写入路径。
+        // TagRepository.ensureTag()（tag.repository.ts:37-46）内部第一件事就是
+        // findByNameOrAlias（第 39 行），故此处命中别名即落到主 tag，
+        // 不会新增「开发指南」式新行——这是既有归一化的显式化调用点。
+        const tags = new TagRepository(this.db);
+        const maxCount = Math.max(1, this.rules.getNumber("ai_tag_max_count", 7));
+        const tagNames = parseTagPayload(payload).slice(0, maxCount);
+        const tagIds: string[] = [];
+        for (const name of tagNames) {
+          const tag = tags.findByNameOrAlias(name) ?? tags.ensureTag(name);
+          tags.bindTag(suggestion.collection_id, tag.id, "ai");
+          tagIds.push(tag.id);
+        }
+        return { tag_ids: tagIds };
+      }
+      case "suggested_content_type": {
+        // 形式标签：只写 collections.content_type 列，永不进 tags 表（PRD 16.2）。
+        const contentType = payload.trim();
+        if (!contentType) return {};
+        const before = (
+          this.db
+            .prepare("SELECT content_type FROM collections WHERE id = ?")
+            .get(suggestion.collection_id) as { content_type?: string | null } | undefined
+        )?.content_type;
+        this.db
+          .prepare("UPDATE collections SET content_type = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(contentType, suggestion.collection_id);
+        return { content_type: contentType, previous_content_type: before ?? null };
       }
       case "suggested_summary": {
         this.db
@@ -1039,7 +1338,10 @@ export class TaskService {
       const data = JSON.parse(feedback.event_data) as Record<string, unknown>;
       const topics = new TopicRepository(this.db);
       const groups = new ContentGroupRepository(this.db);
-      if (feedback.event_type === "ai_tag_accepted" && Array.isArray(data.tag_ids)) {
+      if (
+        (feedback.event_type === "ai_tag_accepted" || feedback.event_type === "ai_content_tag_accepted") &&
+        Array.isArray(data.tag_ids)
+      ) {
         const placeholders = (data.tag_ids as string[]).map(() => "?").join(",");
         this.db
           .prepare(
@@ -1047,6 +1349,14 @@ export class TaskService {
              WHERE collection_id = ? AND source = 'ai' AND tag_id IN (${placeholders})`,
           )
           .run(suggestion.collection_id, ...(data.tag_ids as string[]));
+      } else if (
+        feedback.event_type === "ai_content_type_accepted" &&
+        typeof data.content_type === "string"
+      ) {
+        // 形式标签撤销：还原该列上一值（可能为 NULL）
+        this.db
+          .prepare("UPDATE collections SET content_type = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(data.previous_content_type ?? null, suggestion.collection_id);
       } else if (feedback.event_type === "ai_topic_accepted" && typeof data.topic_id === "string") {
         topics.removeCollection(data.topic_id, suggestion.collection_id);
       } else if (feedback.event_type === "ai_summary_accepted") {

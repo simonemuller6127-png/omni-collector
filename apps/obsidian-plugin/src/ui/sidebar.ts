@@ -1,7 +1,14 @@
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import type { EngineClient } from "../comm/socket-client.js";
+import { describeError } from "../errors.js";
 
 export const VIEW_TYPE_OMNI = "omni-collector-view";
+
+/** 疑似重复 Tag 提示（来自引擎 SyncReport.duplicateTags）。 */
+export interface DuplicateTagHint {
+  a: string;
+  b: string;
+}
 
 export interface OmniController {
   openCollectionList(platform?: string): Promise<void>;
@@ -20,6 +27,8 @@ export interface OmniController {
   generateMarkdown(): Promise<void>;
   runGroupRecognition(): Promise<void>;
   scanLocalFiles(): Promise<void>;
+  /** 今日回顾（借鉴 Readwise Daily Review）：随机重现一条最旧的未整理收藏。 */
+  dailyReview(): Promise<void>;
 }
 
 const PLATFORMS: Array<{ key: string; label: string }> = [
@@ -35,8 +44,10 @@ export class OmniSidebarView extends ItemView {
   private dotEl!: HTMLElement;
   private totalEl!: HTMLElement;
   private summaryEl!: HTMLElement;
+  private dupeEl!: HTMLElement;
   private startBtn!: HTMLElement;
   private platformEls = new Map<string, HTMLElement>();
+  private duplicateHints: DuplicateTagHint[] = [];
   private busy = false;
 
   constructor(
@@ -86,6 +97,7 @@ export class OmniSidebarView extends ItemView {
     });
     this.totalEl = container.createEl("div", { cls: "omni-total" });
     this.summaryEl = container.createEl("div", { cls: "omni-total omni-summary" });
+    this.dupeEl = container.createEl("div", { cls: "omni-dupe-hint" });
 
     // 同步区
     container.createEl("div", { text: "同步", cls: "omni-section-title" });
@@ -126,6 +138,7 @@ export class OmniSidebarView extends ItemView {
     container.createEl("div", { text: "内容", cls: "omni-section-title" });
     const contentRow = container.createEl("div", { cls: "omni-btn-grid" });
     this.addActionButton(contentRow, "收藏列表", () => this.ctrl.openCollectionList());
+    this.addActionButton(contentRow, "今日回顾", () => this.withBusy(async () => { await this.ctrl.dailyReview(); }));
     this.addActionButton(contentRow, "生成 Markdown", () => this.withBusy(async () => { await this.ctrl.generateMarkdown(); }));
     this.addActionButton(contentRow, "分组识别", () => this.withBusy(async () => { await this.ctrl.runGroupRecognition(); }));
     this.addActionButton(contentRow, "AI 建议审核", () => this.ctrl.openAiReview());
@@ -163,12 +176,15 @@ export class OmniSidebarView extends ItemView {
           const el = this.platformEls.get(p.platform);
           if (el) {
             el.empty();
+            const reason = p.health?.reason ?? "";
+            const doc = describeError(reason);
+            const tooltip = doc ? `${reason}\n\n【${doc.code} ${doc.title}】${doc.meaning}\n修复：${doc.fix}` : reason;
             const dot = el.createEl("span", {
               cls: `omni-dot omni-dot-${p.health?.level ?? "unknown"}`,
-              attr: { title: p.health?.reason ?? "" },
+              attr: { title: tooltip },
             });
             el.createEl("span", {
-              text: `${p.count} 条 · ${p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleDateString("zh-CN") : "未同步"}${p.health?.reason ? ` · ${p.health.reason}` : ""}`,
+              text: `${p.count} 条 · ${p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleDateString("zh-CN") : "未同步"}${reason ? ` · ${doc ? doc.title : reason}` : ""}`,
             });
             void dot;
           }
@@ -177,12 +193,42 @@ export class OmniSidebarView extends ItemView {
         const summary = await this.engine.getSummary().catch(() => null);
         if (summary) {
           const a = summary.anomalies;
-          this.summaryEl.setText(`未整理 ${summary.unorganized} · 重要/项目 ${summary.important} · 稍后再看 ${summary.watchLater} · 待审 AI ${summary.aiPending} · Topic ${summary.topics} · 本地 ${summary.localFiles} · 异常 ${a.deleted + a.syncFailed + a.fileMissing}`);
+          const od = summary.overdue ?? { unorganized: 0, watchLater: 0 };
+          this.summaryEl.setText(
+            `未整理 ${summary.unorganized} · 重要/项目 ${summary.important} · 稍后再看 ${summary.watchLater} · 待审 AI ${summary.aiPending} · Topic ${summary.topics} · 本地 ${summary.localFiles} · 异常 ${a.deleted + a.syncFailed + a.fileMissing}` +
+            (od.unorganized + od.watchLater > 0 ? ` · ⏰超期：未整理 ${od.unorganized} / 稍后再看 ${od.watchLater}` : ""),
+          );
         }
+        this.renderDuplicateHint();
       } catch {
         // 状态查询失败不覆盖连接状态
       }
     }
+  }
+
+  /** 由引擎同步报告驱动的疑似重复 Tag 提示（点击一键跳 Tag/Topic 管理）。 */
+  setDuplicateHints(hints: DuplicateTagHint[]): void {
+    this.duplicateHints = Array.isArray(hints) ? hints : [];
+    if (this.dupeEl) this.renderDuplicateHint();
+  }
+
+  private renderDuplicateHint(): void {
+    if (!this.dupeEl) return;
+    this.dupeEl.empty();
+    const hints = this.duplicateHints;
+    if (hints.length === 0) return;
+    const preview = hints
+      .slice(0, 2)
+      .map((h) => `${h.a}→${h.b}`)
+      .join("、");
+    const btn = this.dupeEl.createEl("button", {
+      text: `疑似重复 Tag（${hints.length} 组）· 一键整理`,
+      cls: "omni-btn omni-btn-sm omni-btn-ghost",
+    });
+    btn.setAttribute("title", `仅内容标签参与检测：${preview}${hints.length > 2 ? " …" : ""}`);
+    btn.addEventListener("click", () => {
+      void this.ctrl.openTagTopic();
+    });
   }
 
   private setStatus(ok: boolean): void {

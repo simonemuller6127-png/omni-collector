@@ -8,11 +8,13 @@ import {
   AIRepository,
   AccountRepository,
   CollectionRepository,
+  CommentRepository,
   ContentGroupRepository,
   MigrationManager,
   RuleCenter,
   TagRepository,
   TopicRepository,
+  UserRepository,
 } from "@omni/database";
 import { CookieCipher, TaskService } from "../src/index.js";
 
@@ -238,6 +240,99 @@ describe("TaskService (internal, fake provider)", () => {
       expect(tags.listCollectionsByTag("美术生", "ai")).toContain(col.id);
       expect(tags.listTags().map((t) => t.name)).not.toContain('["生活美学","美术生"]');
       verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("accepting suggested_content_tags reuses alias normalization (hits main tag, no new row)", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv1", {
+        url: "https://x/1",
+        title: "开发教程",
+      });
+      const tags = new TagRepository(db);
+      // 主 Tag「编程开发」+ 别名「开发指北」
+      tags.addAlias("编程开发", "开发指北");
+      const tagCountBefore = tags.listTags().length;
+      const s = new AIRepository(db).saveSuggestion({
+        collection_id: col.id,
+        suggestion_type: "suggested_content_tags",
+        payload: '["开发指北","前端"]',
+      });
+      manager.close();
+
+      const h = service.handlers();
+      expect((await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: s.id, status: "accepted" })))?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const vdb = verifier.getDb();
+      const vt = new TagRepository(vdb);
+      // 别名「开发指北」命中主 Tag「编程开发」，不新增行
+      expect(vt.listCollectionsByTag("编程开发", "ai")).toContain(col.id);
+      expect(vt.listTags().map((t) => t.name)).not.toContain("开发指北");
+      expect(vt.listTags()).toHaveLength(tagCountBefore + 1); // 只新增「前端」
+      expect(vt.listCollectionsByTag("前端", "ai")).toContain(col.id);
+      // 反馈事件闭环
+      const fb = vdb.prepare("SELECT event_type FROM user_feedback WHERE collection_id = ?").all(col.id) as Array<{ event_type: string }>;
+      expect(fb.map((f) => f.event_type)).toContain("ai_content_tag_accepted");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("accepting suggested_content_type writes collections.content_type only, never tags", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv2", {
+        url: "https://x/2",
+        title: "T",
+        content_type: "video",
+      });
+      const tagCountBefore = new TagRepository(db).listTags().length;
+      const s = new AIRepository(db).saveSuggestion({
+        collection_id: col.id,
+        suggestion_type: "suggested_content_type",
+        payload: "图文",
+      });
+      manager.close();
+
+      const h = service.handlers();
+      expect((await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: s.id, status: "accepted" })))?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const vdb = verifier.getDb();
+      const row = vdb.prepare("SELECT content_type FROM collections WHERE id = ?").get(col.id) as { content_type: string };
+      expect(row.content_type).toBe("图文");
+      // 形式标签不进 tags 表
+      expect(new TagRepository(vdb).listTags()).toHaveLength(tagCountBefore);
+      // 反馈事件闭环
+      const fb = vdb.prepare("SELECT event_type, event_data FROM user_feedback WHERE collection_id = ?").all(col.id) as Array<{ event_type: string; event_data: string }>;
+      expect(fb.map((f) => f.event_type)).toContain("ai_content_type_accepted");
+      const evt = fb.find((f) => f.event_type === "ai_content_type_accepted");
+      expect(JSON.parse(evt!.event_data).previous_content_type).toBe("video");
+      verifier.close();
+
+      // 撤销：content_type 还原上一值
+      const h2 = service.handlers();
+      expect((await h2.AI_REVIEW_UNDO?.(makeMsg("AI_REVIEW_UNDO", { suggestion_id: s.id })))?.message_type).toBe("TASK_COMPLETE");
+      const verifier2 = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier2.migrate();
+      const row2 = verifier2.getDb().prepare("SELECT content_type FROM collections WHERE id = ?").get(col.id) as { content_type: string };
+      expect(row2.content_type).toBe("video");
+      verifier2.close();
     } finally {
       service.dispose();
     }
@@ -612,6 +707,147 @@ describe("TaskService (internal, fake provider)", () => {
       expect(new TopicRepository(vdb).listTopicsOfCollection(col.id).map((t) => t.name)).toEqual(["AI 工程"]);
       expect(new CollectionRepository(vdb).findById(col.id)?.priority).toBe("important");
       verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("TASK_RATING writes user_rating sync copy (PRD 29.2), 0 clears", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const col = new CollectionRepository(manager.getDb()).upsertByPlatformItem("bilibili", "bv1", { url: "https://b23.tv/BV1", title: "视频" });
+      manager.close();
+
+      const h = service.handlers();
+      const bad = await h.TASK_RATING?.(makeMsg("TASK_RATING", { collection_id: col.id, rating: 6 }));
+      expect(bad?.message_type).toBe("TASK_ERROR");
+      expect(String(bad?.payload?.code)).toContain("RAT_001");
+
+      const set = await h.TASK_RATING?.(makeMsg("TASK_RATING", { collection_id: col.id, rating: 4 }));
+      expect(set?.message_type).toBe("TASK_COMPLETE");
+      expect(set?.payload?.rating).toBe(4);
+
+      const clear = await h.TASK_RATING?.(makeMsg("TASK_RATING", { collection_id: col.id, rating: 0 }));
+      expect(clear?.message_type).toBe("TASK_COMPLETE");
+      expect(clear?.payload?.rating).toBeNull();
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      expect(new UserRepository(verifier.getDb()).getNote(col.id)?.user_rating ?? null).toBeNull();
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("TASK_COMMENT_STAR toggles is_starred within collection scope (PRD 7.3)", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv2", { url: "https://b23.tv/BV2", title: "视频2" });
+      new CommentRepository(db).upsertComments(col.id, [
+        { comment_id: "c1", author: "甲", content: "好文", like_count: 10 },
+        { comment_id: "c2", author: "乙", content: "收藏了", like_count: 5 },
+      ]);
+      const comments = new CommentRepository(db).getByCollection(col.id);
+      manager.close();
+      const target = comments.find((c) => c.comment_id === "c1")!;
+
+      const h = service.handlers();
+      const star = await h.TASK_COMMENT_STAR?.(makeMsg("TASK_COMMENT_STAR", { collection_id: col.id, comment_id: target.id, starred: true }));
+      expect(star?.message_type).toBe("TASK_COMPLETE");
+
+      const mismatch = await h.TASK_COMMENT_STAR?.(makeMsg("TASK_COMMENT_STAR", { collection_id: "no-such", comment_id: target.id, starred: true }));
+      expect(mismatch?.message_type).toBe("TASK_ERROR");
+      expect(String(mismatch?.payload?.code)).toContain("STAR_002");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const after = new CommentRepository(verifier.getDb()).getByCollection(col.id).find((c) => c.id === target.id);
+      expect(after?.is_starred).toBe(1);
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("user_feedback events recorded on organize/priority/rating (PRD 18.1)", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const col = new CollectionRepository(manager.getDb()).upsertByPlatformItem("bilibili", "bv3", { url: "https://b23.tv/BV3", title: "视频3" });
+      manager.close();
+
+      const h = service.handlers();
+      await h.TASK_ORGANIZE?.(makeMsg("TASK_ORGANIZE", { collection_id: col.id, organize_status: "organized" }));
+      await h.TASK_PRIORITY?.(makeMsg("TASK_PRIORITY", { collection_id: col.id, priority: "project" }));
+      await h.TASK_RATING?.(makeMsg("TASK_RATING", { collection_id: col.id, rating: 5 }));
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const events = (verifier.getDb().prepare("SELECT event_type FROM user_feedback WHERE collection_id = ?").all(col.id) as Array<{ event_type: string }>).map((r) => r.event_type);
+      expect(events).toContain("organize_status_set");
+      expect(events).toContain("organize_completed");
+      expect(events).toContain("priority_set");
+      expect(events).toContain("rating_set");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("group join/leave/merge and topic merge (PRD 24 manual series ops)", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const c1 = new CollectionRepository(db).upsertByPlatformItem("bilibili", "s1", { url: "https://b23.tv/S1", title: "系列1-1" });
+      const c2 = new CollectionRepository(db).upsertByPlatformItem("bilibili", "s2", { url: "https://b23.tv/S2", title: "系列1-2" });
+      const c3 = new CollectionRepository(db).upsertByPlatformItem("bilibili", "s3", { url: "https://b23.tv/S3", title: "系列2-1" });
+      manager.close();
+
+      const h = service.handlers();
+      // 加入系列（创建）+ 移出
+      expect((await h.TASK_GROUP_JOIN?.(makeMsg("TASK_GROUP_JOIN", { collection_id: c1.id, group: "Vue 入门系列" })))?.message_type).toBe("TASK_COMPLETE");
+      expect((await h.TASK_GROUP_JOIN?.(makeMsg("TASK_GROUP_JOIN", { collection_id: c2.id, group: "Vue 入门系列" })))?.message_type).toBe("TASK_COMPLETE");
+      // 系列进度统计（detail scope）
+      const detail = await h.STATUS_QUERY?.(makeMsg("STATUS_QUERY", { scope: "collection", id: c1.id }));
+      const dto = detail?.payload?.collection as { groupName?: string; groupSize?: number; groupOrganized?: number };
+      expect(dto.groupName).toBe("Vue 入门系列");
+      expect(dto.groupSize).toBe(2);
+      expect(dto.groupOrganized).toBe(0);
+      // 整组合并：Vue 入门系列 并入 Vue 系列
+      const merged = await h.TASK_GROUP_MERGE?.(makeMsg("TASK_GROUP_MERGE", { source: "Vue 入门系列", target: "Vue 系列" }));
+      expect(merged?.message_type).toBe("TASK_COMPLETE");
+      expect(merged?.payload?.moved).toBe(2);
+      // 拆分：移出
+      expect((await h.TASK_GROUP_LEAVE?.(makeMsg("TASK_GROUP_LEAVE", { collection_id: c2.id })))?.message_type).toBe("TASK_COMPLETE");
+      // Topic 合并（重开连接建 Topic，避免与服务内连接竞争关闭时序）
+      const seed = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      seed.migrate();
+      const topics = new TopicRepository(seed.getDb());
+      const t1 = topics.createTopic("前端", c1.id);
+      const t2 = topics.createTopic("Vue");
+      topics.addCollection(t2.id, c2.id);
+      const tm = await h.TOPIC_MERGE?.(makeMsg("TOPIC_MERGE", { source_id: t2.id, target_id: t1.id }));
+      expect(tm?.message_type).toBe("TASK_COMPLETE");
+      expect(tm?.payload?.moved).toBe(1);
+      expect(topics.findById(t2.id)).toBeUndefined();
+      expect(topics.listTopicsOfCollection(c2.id).map((t) => t.name)).toEqual(["前端"]);
+      seed.close();
+      // c3 从未入组，leave 应报错
+      const bad = await h.TASK_GROUP_LEAVE?.(makeMsg("TASK_GROUP_LEAVE", { collection_id: c3.id }));
+      expect(bad?.message_type).toBe("TASK_ERROR");
     } finally {
       service.dispose();
     }

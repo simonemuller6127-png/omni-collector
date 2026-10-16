@@ -1,4 +1,12 @@
 import type { CollectionDTO, UserZone } from "@omni/shared-core";
+import {
+  isHierarchicalTopic,
+  parseTopicSegments,
+  topicDepth,
+  topicHubRelPath,
+  topicLeafName,
+  topicParentPath,
+} from "./topic-path.js";
 
 const SYSTEM_START = "<!-- OMNI_SYSTEM_START -->";
 const SYSTEM_END = "<!-- OMNI_SYSTEM_END -->";
@@ -19,6 +27,24 @@ export function sanitizeFilename(name: string): string {
 }
 
 /**
+ * Topic 名 → hub wikilink 相对路径（相对 Omni Collector/Topics/）。
+ * 层级 Topic 走路径命名：「游戏:F1赛车」→ "游戏/F1赛车"；单级保持旧行为。
+ */
+export function topicHubWikilinkPath(topicName: string): string {
+  return topicHubRelPath(topicName, sanitizeFilename);
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** 评分展示（PRD 29.2：1~5 星，用户区）。 */
+export function renderRating(rating?: number | null): string {
+  const n = Math.max(0, Math.min(5, Math.round(rating ?? 0)));
+  return n === 0 ? "" : `${"★".repeat(n)}${"☆".repeat(5 - n)}（${n}/5）`;
+}
+
+/**
  * Markdown 区域隔离协议（TDD Part 8，SPEC S7 冻结）：
  * 系统区由 Plugin 依据 Engine DTO 生成；用户区任何自动化逻辑禁止修改（ADR-011/ADR-006）。
  */
@@ -31,6 +57,11 @@ export class MarkdownBuilder {
       `sync_status: ${yamlString(dto.syncStatus)}`,
     ].join('\n');
     const comments = (dto.comments ?? []).map((c) => `- **${c.author}**：${c.content}`).join('\n');
+    const starred = (dto.comments ?? [])
+      .filter((c) => c.starred)
+      .map((c) => `- **${c.author}**：${c.content}`)
+      .join('\n');
+    const ratingText = renderRating(dto.rating);
     const frontmatter = this.buildFrontmatter(dto);
     const graphLinks = this.buildGraphLinks(dto);
     return [
@@ -56,10 +87,8 @@ export class MarkdownBuilder {
       '<!-- 以下为用户私有编辑区，任何自动化逻辑禁止修改 -->',
       '## 我的笔记',
       '',
-      '## 精选评论',
-      '',
-      '## 评分与优先级',
-      '',
+      ...(starred ? ['## 精选评论', '', starred, ''] : ['## 精选评论', '']),
+      ...(ratingText ? ['## 评分与优先级', '', ratingText, ''] : ['## 评分与优先级', '']),
     ].join('\n');
   }
 
@@ -126,7 +155,7 @@ export class MarkdownBuilder {
 
   private buildGraphLinks(dto: CollectionDTO): string {
     const topicLinks = (dto.topics ?? [])
-      .map((t) => `- [[Omni Collector/Topics/${sanitizeFilename(t)}]]`)
+      .map((t) => `- [[Omni Collector/Topics/${topicHubWikilinkPath(t)}]]`)
       .join("\n");
     const tagLinks = (dto.tags ?? [])
       .map((t) => `- [[Omni Collector/Tags/${sanitizeFilename(t)}]]`)
@@ -134,49 +163,161 @@ export class MarkdownBuilder {
     return [topicLinks, tagLinks].filter(Boolean).join("\n");
   }
 
-  /** Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。 */
+  /**
+   * Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。
+   * 多级 Topic 走路径命名：「游戏:F1赛车」落 Topics/游戏/F1赛车.md，
+   * frontmatter 带 parent: "游戏"，H1 用叶子名（与文件名一致，利于图谱识别）。
+   */
   buildTopicHub(topicName: string, noteLinks: string[]): string {
     const name = (topicName || "未命名主题").trim();
-    const links = [...new Set(noteLinks.filter(Boolean))]
-      .map((l) => `- [[${l.replace(/\.md$/i, "")}]]`)
-      .join("\n");
-    return [
-      "---",
-      `topic: ${yamlString(name)}`,
-      `tags: ["topic/${sanitizeFilename(name)}"]`,
-      "---",
-      "",
-      `# ${name}`,
-      "",
-      "> 主题聚合页（Omni Collector 自动生成，修改会被覆盖）",
-      "",
-      "## 收藏",
-      "",
-      links,
-      "",
-    ].join("\n");
+    const parent = topicParentPath(name);
+    const leaf = topicLeafName(name) || name;
+    return this.buildHub(name, noteLinks, {
+      frontmatterKey: "topic",
+      tags: [JSON.stringify(`topic/${sanitizeFilename(name)}`)],
+      dataviewField: "topics",
+      /** 层级 Topic 的父级（无层级不带该键，保持旧格式兼容）。 */
+      extraFrontmatter: parent ? [{ key: "parent", value: yamlString(parent) }] : undefined,
+      /** H1 用叶子名；单级 Topic 与旧行为完全一致。 */
+      displayName: leaf,
+      /** 系统区「层级」段：父级链接 + 深度（路径命名实现多级，无 parent_id migration）。 */
+      hierarchy: parent ? { parent, depth: topicDepth(name) } : undefined,
+    });
   }
 
   /** Tag 聚合页（PRD 16 / 关系图谱联动）：主 Tag 节点 + 成员笔记 wikilink。 */
   buildTagHub(tagName: string, noteLinks: string[]): string {
     const name = (tagName || "未命名标签").trim();
+    return this.buildHub(name, noteLinks, {
+      frontmatterKey: "tag",
+      tags: [JSON.stringify(sanitizeFilename(name))],
+      dataviewField: "tags",
+    });
+  }
+
+  /**
+   * 聚合页统一构造（PRD 17/16）：与收藏笔记相同的区域隔离协议——
+   * 系统区（成员 wikilink + Dataview 动态索引）自动维护；「我的整理」起为用户区，自动化禁止触碰。
+   * frontmatter 的 aliases 供用户自定义别名（图谱/解析原生生效）。
+   */
+  private buildHub(
+    name: string,
+    noteLinks: string[],
+    cfg: {
+      frontmatterKey: "topic" | "tag";
+      tags: string[];
+      dataviewField: "topics" | "tags";
+      /** 附加 frontmatter 键（如层级 Topic 的 parent）。 */
+      extraFrontmatter?: Array<{ key: string; value: string }>;
+      /** H1 展示名（层级 Topic 用叶子名）；缺省回退到 name。 */
+      displayName?: string;
+      /** 层级信息（仅 topic 且有父级时传入，用于系统区「层级」段）。 */
+      hierarchy?: { parent: string; depth: number };
+    },
+  ): string {
+    const extra = (cfg.extraFrontmatter ?? []).map((e) => `${e.key}: ${e.value}`);
+    const heading = escapeTitleHash(cfg.displayName ?? name);
+    return [
+      "---",
+      `${cfg.frontmatterKey}: ${yamlString(name)}`,
+      ...(extra.length > 0 ? extra : []),
+      `tags: [${cfg.tags.join(", ")}]`,
+      "aliases: []",
+      "---",
+      "",
+      `# ${heading}`,
+      "",
+      `> 聚合页说明：系统区（标记注释之间）由 Omni Collector 自动维护；「## 我的整理」及之后为用户区，任何自动化逻辑禁止修改。`,
+      "",
+      SYSTEM_START,
+      this.buildHubSystemZone(name, noteLinks, cfg.dataviewField, cfg.hierarchy),
+      SYSTEM_END,
+      "",
+      "## 我的整理",
+      "",
+    ].join("\n");
+  }
+
+  /**
+   * 聚合页系统区：成员 wikilink（图谱边）+ Dataview 动态索引（按 frontmatter 元数据实时查询）。
+   * 层级 Topic 额外输出「层级」段：父级链接 + 深度，供图谱中向上导航（路径命名实现多级）。
+   */
+  private buildHubSystemZone(
+    name: string,
+    noteLinks: string[],
+    dataviewField: "topics" | "tags",
+    hierarchy?: { parent: string; depth: number },
+  ): string {
     const links = [...new Set(noteLinks.filter(Boolean))]
       .map((l) => `- [[${l.replace(/\.md$/i, "")}]]`)
       .join("\n");
+    const safeName = name.replace(/"/g, "'");
+    const hierSection =
+      hierarchy && dataviewField === "topics"
+        ? [
+            "## 层级",
+            "",
+            `父级：[[Omni Collector/Topics/${topicHubWikilinkPath(hierarchy.parent)}]]`,
+            `深度：${hierarchy.depth}`,
+            "",
+          ]
+        : [];
     return [
-      "---",
-      `tags: ["${sanitizeFilename(name)}"]`,
-      "---",
-      "",
-      `# ${name}`,
-      "",
-      "> 标签聚合页（Omni Collector 自动生成，修改会被覆盖）",
-      "",
       "## 收藏",
       "",
-      links,
+      links || "（暂无成员）",
+      "",
+      ...hierSection,
+      "## 动态索引",
+      "",
+      "```dataview",
+      "TABLE priority AS 优先级, organize_status AS 整理状态, collected_at AS 收藏日期",
+      'FROM "Omni Collector"',
+      `WHERE contains(${dataviewField}, "${safeName}")`,
+      "SORT collected_at DESC",
+      "```",
       "",
     ].join("\n");
+  }
+
+  /**
+   * 更新聚合页系统区（成员/标题变化时）：只替换标记内内容并镜像 H1，
+   * frontmatter（含用户 aliases）与「我的整理」用户区原样保留。
+   * 返回 null 表示文件缺少系统区标记（旧格式，由调用方决定升级策略）。
+   */
+  replaceHubSystemZone(
+    md: string,
+    hubTitle: string,
+    noteLinks: string[],
+    dataviewField: "topics" | "tags",
+  ): string | null {
+    if (!this.validateMarkers(md)) return null;
+    const start = md.indexOf(SYSTEM_START);
+    const end = md.indexOf(SYSTEM_END) + SYSTEM_END.length;
+    const head = md.slice(0, start);
+    const tail = md.slice(end);
+    const system = `${SYSTEM_START}\n${this.buildHubSystemZone(hubTitle, noteLinks, dataviewField)}${SYSTEM_END}`;
+    const updatedHead = head.replace(/^# .*$/m, `# ${escapeTitleHash(hubTitle)}`);
+    return `${updatedHead}${system}${tail}`;
+  }
+
+  /**
+   * 替换用户区指定小节的内容（仅系统区标记之后）。
+   * 仅用于物化用户在插件 UI 的显式操作（评分 PRD 29.2 / 精选评论 PRD 7.3），
+   * 等同用户本人编辑，不属于自动化覆盖。
+   */
+  replaceUserZoneSection(md: string, headerKeyword: string, content: string): string | null {
+    if (!this.validateMarkers(md)) return null;
+    const markerIdx = md.indexOf(SYSTEM_END) + SYSTEM_END.length;
+    const head = md.slice(0, markerIdx);
+    const tail = md.slice(markerIdx);
+    const re = new RegExp(
+      `(^##\\s+.*${escapeRegExp(headerKeyword)}.*\\n)([\\s\\S]*?)(?=^##\\s|^#\\s|(?![\\s\\S]))`,
+      "m",
+    );
+    if (!re.test(tail)) return null;
+    const body = content.trim() ? `${content.trim()}\n\n` : "\n";
+    return head + tail.replace(re, `$1${body}`);
   }
 
   extractUserZone(md: string): UserZone {

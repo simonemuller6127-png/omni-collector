@@ -144,22 +144,29 @@ export class EngineClient {
     });
   }
 
-  request(msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string }): Promise<OmniMessage> {
+  request(
+    msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string },
+    opts?: { timeoutMs?: number },
+  ): Promise<OmniMessage> {
     if (!this.started && msg.message_type !== "ENGINE_START" && this.autoStart) {
-      return this.ensureStarted().then(() => this.requestRaw(msg));
+      return this.ensureStarted().then(() => this.requestRaw(msg, opts));
     }
-    return this.requestRaw(msg);
+    return this.requestRaw(msg, opts);
   }
 
-  private requestRaw(msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string }): Promise<OmniMessage> {
+  private requestRaw(
+    msg: Omit<OmniMessage, "timestamp"> & { timestamp?: string },
+    opts?: { timeoutMs?: number },
+  ): Promise<OmniMessage> {
     const full: OmniMessage = { ...msg, timestamp: msg.timestamp ?? new Date().toISOString() };
+    const timeoutMs = opts?.timeoutMs ?? this.requestTimeoutMs;
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(this.opts.pipePath);
       let buffer = "";
       const timer = setTimeout(() => {
         socket.destroy();
         reject(new Error("request timeout"));
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
       socket.setEncoding("utf8");
       socket.on("connect", () => socket.write(`${JSON.stringify(full)}\n`));
       socket.on("data", (chunk: string) => {
@@ -235,9 +242,24 @@ export class EngineClient {
     });
   }
 
+  /**
+   * 打开可视化登录窗口（PRD 26.1）：用户在窗口手动登录，成功后引擎自动捕获并加密 Cookie。
+   * 耗时任务（默认等待 5 分钟），期间可继续其他操作。
+   */
+  async openLoginWindow(platform: string, timeoutSeconds?: number): Promise<OmniMessage> {
+    return this.request(
+      {
+        request_id: randomUUID(),
+        timestamp: new Date().toISOString(),
+        message_type: "TASK_LOGIN",
+        payload: { platform, ...(typeof timeoutSeconds === "number" ? { timeout_seconds: timeoutSeconds } : {}) },
+      },
+      { timeoutMs: 570_000 },
+    );
+  }
+
   /** 查询平台 Cookie 状态（不返回明文）。 */
-  async cookieStatus(platform: string): Promise<{
-    platform: string;
+  async cookieStatus(platform: string): Promise<{    platform: string;
     has_cookie: boolean;
     cookie_count: number;
     valid: boolean;
@@ -321,9 +343,59 @@ export class EngineClient {
     });
   }
 
-  /** 查询收藏列表（DTO）。 */
-  async listCollections(): Promise<import("@omni/shared-core").CollectionDTO[]> {
+  /** 系列手动合并（PRD 24）：加入分组/系列，按名称，不存在则创建。 */
+  async joinGroup(collectionId: string, group: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_GROUP_JOIN",
+      payload: { collection_id: collectionId, group },
+    });
+  }
+
+  /** 系列手动拆分（PRD 24）：移出所在分组。 */
+  async leaveGroup(collectionId: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_GROUP_LEAVE",
+      payload: { collection_id: collectionId },
+    });
+  }
+
+  /** 分组整体并入另一分组（按名称，source 删除）。 */
+  async mergeGroup(source: string, target: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_GROUP_MERGE",
+      payload: { source, target },
+    });
+  }
+
+  /** Topic 合并：source 成员并入 target 后删除 source。 */
+  async mergeTopic(sourceId: string, targetId: string): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TOPIC_MERGE",
+      payload: { source_id: sourceId, target_id: targetId },
+    });
+  }
+
+  /** 分组/系列列表（受控词表与分组管理用）。 */
+  async listGroups(): Promise<Array<{ id: string; name: string; type: string; collection_count: number }>> {
     const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "STATUS_QUERY",
+      payload: { scope: "groups" },
+    });
+    return (res.payload?.groups as Array<{ id: string; name: string; type: string; collection_count: number }>) ?? [];
+  }
+
+  /** 查询收藏列表（DTO）。 */
+  async listCollections(): Promise<import("@omni/shared-core").CollectionDTO[]> {    const res = await this.request({
       request_id: randomUUID(),
       timestamp: new Date().toISOString(),
       message_type: "STATUS_QUERY",
@@ -462,6 +534,20 @@ export class EngineClient {
     return (res.payload?.tags as TagDTO[]) ?? [];
   }
 
+  /**
+   * 引擎侧疑似重复 Tag（权威实现 findNearDuplicateTags）。
+   * 阈值/截断数走 business_rules，Tag 数不足时引擎返回空数组。
+   */
+  async listDuplicateTags(): Promise<Array<{ a: string; b: string }>> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TAG_LIST",
+      payload: {},
+    });
+    return (res.payload?.duplicateTags as Array<{ a: string; b: string }>) ?? [];
+  }
+
   /** 为 Tag 添加别名。 */
   async addTagAlias(tag: string, alias: string): Promise<OmniMessage> {
     return this.request({
@@ -533,6 +619,26 @@ export class EngineClient {
     });
   }
 
+  /** 用户手动评分 1~5 星（PRD 29.2）；rating=0 清除。 */
+  async setRating(collectionId: string, rating: number): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_RATING",
+      payload: { collection_id: collectionId, rating },
+    });
+  }
+
+  /** 用户精选评论（PRD 7.3）：切换 is_starred 同步副本。 */
+  async starComment(collectionId: string, commentId: string, starred: boolean): Promise<OmniMessage> {
+    return this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TASK_COMMENT_STAR",
+      payload: { collection_id: collectionId, comment_id: commentId, starred },
+    });
+  }
+
   /** 扫描本地文件夹（Markdown/PDF）并关联收藏。 */
   async scanFolder(folder: string): Promise<OmniMessage> {
     return this.request({
@@ -589,6 +695,7 @@ export class EngineClient {
     localFiles: number;
     topics: number;
     anomalies: { deleted: number; syncFailed: number; fileMissing: number };
+    overdue: { unorganized: number; watchLater: number };
   }> {
     const res = await this.request({
       request_id: randomUUID(),
@@ -596,7 +703,7 @@ export class EngineClient {
       message_type: "STATUS_QUERY",
       payload: { scope: "summary" },
     });
-    return (res.payload?.summary as {
+    const summary = (res.payload?.summary ?? {}) as Partial<{
       total: number;
       unorganized: number;
       important: number;
@@ -605,9 +712,18 @@ export class EngineClient {
       localFiles: number;
       topics: number;
       anomalies: { deleted: number; syncFailed: number; fileMissing: number };
-    }) ?? {
-      total: 0, unorganized: 0, important: 0, aiPending: 0, watchLater: 0, localFiles: 0, topics: 0,
-      anomalies: { deleted: 0, syncFailed: 0, fileMissing: 0 },
+      overdue: { unorganized: number; watchLater: number };
+    }>;
+    return {
+      total: summary.total ?? 0,
+      unorganized: summary.unorganized ?? 0,
+      important: summary.important ?? 0,
+      aiPending: summary.aiPending ?? 0,
+      watchLater: summary.watchLater ?? 0,
+      localFiles: summary.localFiles ?? 0,
+      topics: summary.topics ?? 0,
+      anomalies: summary.anomalies ?? { deleted: 0, syncFailed: 0, fileMissing: 0 },
+      overdue: summary.overdue ?? { unorganized: 0, watchLater: 0 },
     };
   }
 

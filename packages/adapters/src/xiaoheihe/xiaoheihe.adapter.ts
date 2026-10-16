@@ -66,7 +66,10 @@ export function parseXhhFavoritePayload(json: unknown): XhhFavoriteItem[] {
     const topic = asRecord(topics[0]);
     const imgs = Array.isArray(link.imgs) ? (link.imgs as string[]) : [];
     const thumbs = Array.isArray(link.thumbs) ? (link.thumbs as string[]) : [];
-    const isDeleted = Number(link.is_deleted ?? 0) === 1;
+    // 平台对已删除帖子不设 is_deleted 标志，而是把简介写成"内容已失效"（标题/时间一并缺失），
+    // 必须凭简介识别，否则失效收藏永远以 active 状态冒泡在列表顶部
+    const isDeleted =
+      Number(link.is_deleted ?? 0) === 1 || link.description === "内容已失效";
     const createAt = Number(link.create_at ?? 0);
     const appId = link.app_id ?? topic?.app_id;
     const contentType: "post" | "game" =
@@ -204,7 +207,9 @@ export class XiaoheiheAdapter extends BaseAdapter {
           title: it.title || "小黑盒收藏",
           author: it.author,
           coverUrl: it.coverUrl,
-          collectedAt: it.collectedAt ?? new Date().toISOString(),
+          // 缺失 create_at（常见于已删除内容）时保留 undefined：
+          // 伪造"同步时间"会让这些条目每次同步都冒泡到列表顶部
+          collectedAt: it.collectedAt,
           saveType: "favorited" as const,
           extra: {
             contentType: it.contentType,

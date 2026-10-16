@@ -3976,6 +3976,23 @@ var OmniSettingTab = class extends import_obsidian2.PluginSettingTab {
           }
         })
       );
+      statusRow.addButton(
+        (btn) => btn.setButtonText("\u767B\u5F55\u7A97\u53E3").onClick(async () => {
+          new import_obsidian2.Notice(`${label} \u767B\u5F55\u7A97\u53E3\u6253\u5F00\u4E2D\uFF0C\u8BF7\u5728\u7A97\u53E3\u91CC\u624B\u52A8\u767B\u5F55\uFF08\u6700\u957F\u7B49 5 \u5206\u949F\uFF0C\u6210\u529F\u540E\u81EA\u52A8\u52A0\u5BC6\u4FDD\u5B58\uFF0C\u65E0\u9700\u7C98\u8D34\uFF09`);
+          try {
+            const res = await this.plugin.engine.openLoginWindow(key);
+            if (res.payload?.logged_in) {
+              new import_obsidian2.Notice(`${label} \u767B\u5F55\u6210\u529F\uFF0CCookie \u5DF2\u52A0\u5BC6\u4FDD\u5B58\u5230\u672C\u5730\uFF08data/cookies\uFF09`);
+            } else {
+              new import_obsidian2.Notice(`${label} \u767B\u5F55\u672A\u5B8C\u6210\uFF1A${String(res.payload?.reason ?? "\u7A97\u53E3\u5DF2\u5173\u95ED")}`);
+            }
+          } catch (err) {
+            new import_obsidian2.Notice(`\u767B\u5F55\u7A97\u53E3\u5931\u8D25\uFF1A${err.message}`);
+          } finally {
+            await refreshStatus();
+          }
+        })
+      );
       void refreshStatus();
     }
     new import_obsidian2.Setting(containerEl).setName("Engine").setHeading();
@@ -4131,6 +4148,13 @@ var MESSAGE_TYPES = [
   "TASK_TAG",
   "TASK_TOPIC",
   "TASK_PRIORITY",
+  "TASK_RATING",
+  "TASK_COMMENT_STAR",
+  "TASK_LOGIN",
+  "TASK_GROUP_JOIN",
+  "TASK_GROUP_LEAVE",
+  "TASK_GROUP_MERGE",
+  "TOPIC_MERGE",
   "TASK_INDEX",
   "TASK_FETCH",
   "TASK_CONVERT",
@@ -4168,6 +4192,13 @@ var REQUIRED_PAYLOAD_FIELDS = {
   TASK_TAG: ["collection_id", "tag"],
   TASK_TOPIC: ["collection_id", "topic"],
   TASK_PRIORITY: ["collection_id", "priority"],
+  TASK_RATING: ["collection_id", "rating"],
+  TASK_COMMENT_STAR: ["collection_id", "comment_id", "starred"],
+  TASK_LOGIN: ["platform"],
+  TASK_GROUP_JOIN: ["collection_id", "group"],
+  TASK_GROUP_LEAVE: ["collection_id"],
+  TASK_GROUP_MERGE: ["source", "target"],
+  TOPIC_MERGE: ["source_id", "target_id"],
   TASK_INDEX: ["folder"],
   TASK_FETCH: ["url"],
   TASK_CONVERT: ["collection_id", "to"],
@@ -4323,21 +4354,22 @@ var EngineClient = class {
       });
     });
   }
-  request(msg) {
+  request(msg, opts) {
     if (!this.started && msg.message_type !== "ENGINE_START" && this.autoStart) {
-      return this.ensureStarted().then(() => this.requestRaw(msg));
+      return this.ensureStarted().then(() => this.requestRaw(msg, opts));
     }
-    return this.requestRaw(msg);
+    return this.requestRaw(msg, opts);
   }
-  requestRaw(msg) {
+  requestRaw(msg, opts) {
     const full = { ...msg, timestamp: msg.timestamp ?? (/* @__PURE__ */ new Date()).toISOString() };
+    const timeoutMs = opts?.timeoutMs ?? this.requestTimeoutMs;
     return new Promise((resolve, reject) => {
       const socket = import_node_net.default.createConnection(this.opts.pipePath);
       let buffer = "";
       const timer = setTimeout(() => {
         socket.destroy();
         reject(new Error("request timeout"));
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
       socket.setEncoding("utf8");
       socket.on("connect", () => socket.write(`${JSON.stringify(full)}
 `));
@@ -4406,6 +4438,21 @@ var EngineClient = class {
       payload: { platform, cookies_json: cookiesJson }
     });
   }
+  /**
+   * 打开可视化登录窗口（PRD 26.1）：用户在窗口手动登录，成功后引擎自动捕获并加密 Cookie。
+   * 耗时任务（默认等待 5 分钟），期间可继续其他操作。
+   */
+  async openLoginWindow(platform, timeoutSeconds) {
+    return this.request(
+      {
+        request_id: (0, import_node_crypto.randomUUID)(),
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        message_type: "TASK_LOGIN",
+        payload: { platform, ...typeof timeoutSeconds === "number" ? { timeout_seconds: timeoutSeconds } : {} }
+      },
+      { timeoutMs: 57e4 }
+    );
+  }
   /** 查询平台 Cookie 状态（不返回明文）。 */
   async cookieStatus(platform) {
     const res = await this.request({
@@ -4452,6 +4499,52 @@ var EngineClient = class {
       message_type: "TASK_GROUP",
       payload: {}
     });
+  }
+  /** 系列手动合并（PRD 24）：加入分组/系列，按名称，不存在则创建。 */
+  async joinGroup(collectionId, group) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_GROUP_JOIN",
+      payload: { collection_id: collectionId, group }
+    });
+  }
+  /** 系列手动拆分（PRD 24）：移出所在分组。 */
+  async leaveGroup(collectionId) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_GROUP_LEAVE",
+      payload: { collection_id: collectionId }
+    });
+  }
+  /** 分组整体并入另一分组（按名称，source 删除）。 */
+  async mergeGroup(source, target) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_GROUP_MERGE",
+      payload: { source, target }
+    });
+  }
+  /** Topic 合并：source 成员并入 target 后删除 source。 */
+  async mergeTopic(sourceId, targetId) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TOPIC_MERGE",
+      payload: { source_id: sourceId, target_id: targetId }
+    });
+  }
+  /** 分组/系列列表（受控词表与分组管理用）。 */
+  async listGroups() {
+    const res = await this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "STATUS_QUERY",
+      payload: { scope: "groups" }
+    });
+    return res.payload?.groups ?? [];
   }
   /** 查询收藏列表（DTO）。 */
   async listCollections() {
@@ -4606,6 +4699,24 @@ var EngineClient = class {
       payload: { collection_id: collectionId, priority }
     });
   }
+  /** 用户手动评分 1~5 星（PRD 29.2）；rating=0 清除。 */
+  async setRating(collectionId, rating) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_RATING",
+      payload: { collection_id: collectionId, rating }
+    });
+  }
+  /** 用户精选评论（PRD 7.3）：切换 is_starred 同步副本。 */
+  async starComment(collectionId, commentId, starred) {
+    return this.request({
+      request_id: (0, import_node_crypto.randomUUID)(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      message_type: "TASK_COMMENT_STAR",
+      payload: { collection_id: collectionId, comment_id: commentId, starred }
+    });
+  }
   /** 扫描本地文件夹（Markdown/PDF）并关联收藏。 */
   async scanFolder(folder) {
     return this.request({
@@ -4656,15 +4767,17 @@ var EngineClient = class {
       message_type: "STATUS_QUERY",
       payload: { scope: "summary" }
     });
-    return res.payload?.summary ?? {
-      total: 0,
-      unorganized: 0,
-      important: 0,
-      aiPending: 0,
-      watchLater: 0,
-      localFiles: 0,
-      topics: 0,
-      anomalies: { deleted: 0, syncFailed: 0, fileMissing: 0 }
+    const summary = res.payload?.summary ?? {};
+    return {
+      total: summary.total ?? 0,
+      unorganized: summary.unorganized ?? 0,
+      important: summary.important ?? 0,
+      aiPending: summary.aiPending ?? 0,
+      watchLater: summary.watchLater ?? 0,
+      localFiles: summary.localFiles ?? 0,
+      topics: summary.topics ?? 0,
+      anomalies: summary.anomalies ?? { deleted: 0, syncFailed: 0, fileMissing: 0 },
+      overdue: summary.overdue ?? { unorganized: 0, watchLater: 0 }
     };
   }
   /** 批量操作。 */
@@ -4801,6 +4914,9 @@ var OmniSidebarView = class extends import_obsidian3.ItemView {
     container.createEl("div", { text: "\u5185\u5BB9", cls: "omni-section-title" });
     const contentRow = container.createEl("div", { cls: "omni-btn-grid" });
     this.addActionButton(contentRow, "\u6536\u85CF\u5217\u8868", () => this.ctrl.openCollectionList());
+    this.addActionButton(contentRow, "\u4ECA\u65E5\u56DE\u987E", () => this.withBusy(async () => {
+      await this.ctrl.dailyReview();
+    }));
     this.addActionButton(contentRow, "\u751F\u6210 Markdown", () => this.withBusy(async () => {
       await this.ctrl.generateMarkdown();
     }));
@@ -4854,7 +4970,10 @@ var OmniSidebarView = class extends import_obsidian3.ItemView {
         const summary = await this.engine.getSummary().catch(() => null);
         if (summary) {
           const a = summary.anomalies;
-          this.summaryEl.setText(`\u672A\u6574\u7406 ${summary.unorganized} \xB7 \u91CD\u8981/\u9879\u76EE ${summary.important} \xB7 \u7A0D\u540E\u518D\u770B ${summary.watchLater} \xB7 \u5F85\u5BA1 AI ${summary.aiPending} \xB7 Topic ${summary.topics} \xB7 \u672C\u5730 ${summary.localFiles} \xB7 \u5F02\u5E38 ${a.deleted + a.syncFailed + a.fileMissing}`);
+          const od = summary.overdue ?? { unorganized: 0, watchLater: 0 };
+          this.summaryEl.setText(
+            `\u672A\u6574\u7406 ${summary.unorganized} \xB7 \u91CD\u8981/\u9879\u76EE ${summary.important} \xB7 \u7A0D\u540E\u518D\u770B ${summary.watchLater} \xB7 \u5F85\u5BA1 AI ${summary.aiPending} \xB7 Topic ${summary.topics} \xB7 \u672C\u5730 ${summary.localFiles} \xB7 \u5F02\u5E38 ${a.deleted + a.syncFailed + a.fileMissing}` + (od.unorganized + od.watchLater > 0 ? ` \xB7 \u23F0\u8D85\u671F\uFF1A\u672A\u6574\u7406 ${od.unorganized} / \u7A0D\u540E\u518D\u770B ${od.watchLater}` : "")
+          );
         }
       } catch {
       }
@@ -5203,6 +5322,7 @@ var OmniTagTopicView = class extends import_obsidian5.ItemView {
       }
       const actions = row.createEl("div", { cls: "omni-row-actions" });
       this.action(actions, "\u91CD\u547D\u540D", () => this.prompt("\u91CD\u547D\u540D Topic", "\u65B0\u540D\u79F0", (v) => this.source.renameTopic(t.id, v).then(() => this.source.refreshMarkdown())));
+      this.action(actions, "\u5E76\u5165\u2026", () => this.prompt(`\u628A\u300C${t.name}\u300D\u5E76\u5165`, "\u76EE\u6807 Topic \u540D\u79F0", (v) => this.source.mergeTopic(t.id, v).then(() => this.source.refreshMarkdown())));
     }
     if (topics.length === 0) {
       list.createEl("div", { text: "\u6682\u65E0 Topic\u3002AI \u5EFA\u8BAE\u786E\u8BA4\u540E\u4F1A\u81EA\u52A8\u521B\u5EFA\uFF1B\u4E5F\u53EF\u5728\u6536\u85CF\u8BE6\u60C5\u624B\u52A8\u5F52\u5165 Topic\u3002", cls: "omni-empty" });
@@ -5242,8 +5362,41 @@ var OmniTagTopicView = class extends import_obsidian5.ItemView {
 var import_obsidian6 = require("obsidian");
 
 // src/ui/helpers.ts
+var PLATFORM_META = {
+  bilibili: { label: "B\u7AD9", color: "#fb7299" },
+  youtube: { label: "YouTube", color: "#ff5449" },
+  xiaohongshu: { label: "\u5C0F\u7EA2\u4E66", color: "#ff2442" },
+  makerworld: { label: "MakerWorld", color: "#2fa84f" },
+  xiaoheihe: { label: "\u5C0F\u9ED1\u76D2", color: "#ff9f43" }
+};
+function platformMeta(platform) {
+  return PLATFORM_META[platform] ?? { label: platform, color: "var(--text-muted)" };
+}
+var VIEW_PRESETS = [
+  { key: "all", label: "\u5168\u90E8", filters: {} },
+  { key: "unorganized", label: "\u672A\u6574\u7406", filters: { status: "unorganized" } },
+  { key: "recent", label: "\u672C\u5468\u65B0\u589E", filters: { recentDays: 7 } },
+  { key: "priority", label: "\u9AD8\u4F18\u5148\u7EA7", filters: { priority: "important" } },
+  { key: "rated", label: "\u5DF2\u8BC4\u5206", filters: { ratedOnly: true } },
+  { key: "watchLater", label: "\u7A0D\u540E\u518D\u770B", filters: {} }
+  // 由列表按 saveType 过滤
+];
+function haystackOf(c) {
+  return [c.title, c.author, c.description, c.url, c.groupName, ...c.tags ?? [], ...c.topics ?? []].filter(Boolean).join("\n").toLowerCase();
+}
 function filterCollections(items, filter) {
-  return items.filter((c) => filter.status ? c.organizeStatus === filter.status : true).filter((c) => filter.priority ? c.priority === filter.priority : true).sort((a, b) => b.collectedAt.localeCompare(a.collectedAt));
+  const keyword = filter.keyword?.trim().toLowerCase();
+  return items.filter((c) => filter.status ? c.organizeStatus === filter.status : true).filter((c) => filter.priority ? c.priority === filter.priority : true).filter((c) => keyword ? haystackOf(c).includes(keyword) : true).sort((a, b) => b.collectedAt.localeCompare(a.collectedAt));
+}
+function pickDailyReview(items, random = Math.random) {
+  const pool = items.filter(
+    (c) => c.contentStatus === "active" && c.organizeStatus !== "archived"
+  );
+  if (pool.length === 0) return null;
+  const unorganized = pool.filter((c) => c.organizeStatus === "unorganized").sort((a, b) => a.collectedAt.localeCompare(b.collectedAt));
+  const base = unorganized.length > 0 ? unorganized : pool;
+  const candidates = base.slice(0, Math.min(20, base.length));
+  return candidates[Math.floor(random() * candidates.length)] ?? null;
 }
 function nextOrganizeState(state) {
   switch (state) {
@@ -5321,6 +5474,11 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     __publicField(this, "saveTypeFilter", "all");
     __publicField(this, "priorityFilter", "all");
     __publicField(this, "platformFilter", null);
+    __publicField(this, "searchQuery", "");
+    __publicField(this, "sortByRating", false);
+    __publicField(this, "ratedOnly", false);
+    __publicField(this, "recentDays", 0);
+    __publicField(this, "activePreset", "all");
     __publicField(this, "mode", "collections");
     __publicField(this, "viewMode", "list");
     __publicField(this, "coverCache", /* @__PURE__ */ new Map());
@@ -5328,6 +5486,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     __publicField(this, "selected", /* @__PURE__ */ new Set());
     __publicField(this, "listEl");
     __publicField(this, "toolbarEl");
+    __publicField(this, "presetsEl");
     __publicField(this, "batchBarEl");
     __publicField(this, "totalEl");
   }
@@ -5354,6 +5513,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     container.createEl("div", { text: "Omni Collector \u6536\u85CF", cls: "omni-panel-title" });
     this.totalEl = container.createEl("div", { cls: "omni-total" });
     this.toolbarEl = container.createEl("div", { cls: "omni-toolbar" });
+    this.presetsEl = container.createEl("div", { cls: "omni-preset-bar" });
     this.batchBarEl = container.createEl("div", { cls: "omni-batch-bar" });
     this.batchBarEl.addClass("is-hidden");
     this.listEl = container.createEl("div", { cls: "omni-list" });
@@ -5362,6 +5522,11 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
   renderToolbar() {
     const tb = this.toolbarEl;
     tb.empty();
+    const preset = VIEW_PRESETS.find((p) => p.key === this.activePreset);
+    if (preset && (this.statusFilter !== (preset.filters.status ?? "all") || this.priorityFilter !== (preset.filters.priority ?? "all") || this.ratedOnly !== (preset.filters.ratedOnly ?? false) || this.recentDays !== (preset.filters.recentDays ?? 0) || preset.key !== "watchLater" && this.saveTypeFilter !== "all")) {
+      this.activePreset = "";
+    }
+    this.renderPresetBar();
     tb.createEl("button", { text: this.mode === "collections" ? "\u6536\u85CF" : "\u6536\u85CF", cls: `omni-chip${this.mode === "collections" ? " omni-chip-active" : ""}` }).addEventListener("click", () => {
       this.mode = "collections";
       this.renderToolbar();
@@ -5427,6 +5592,23 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
           void this.renderList();
         });
       }
+      tb.createEl("span", { text: "\uFF5C", cls: "omni-toolbar-sep" });
+      tb.createEl("button", { text: "\u6309\u8BC4\u5206\u6392\u5E8F", cls: `omni-chip${this.sortByRating ? " omni-chip-active" : ""}` }).addEventListener("click", () => {
+        this.sortByRating = !this.sortByRating;
+        this.renderToolbar();
+        void this.renderList();
+      });
+      tb.createEl("span", { text: "\uFF5C", cls: "omni-toolbar-sep" });
+      const search = tb.createEl("input", {
+        type: "text",
+        placeholder: "\u641C\u7D22 \u6807\u9898/\u4F5C\u8005/\u7B80\u4ECB/Tag/Topic\u2026",
+        cls: "omni-search-input",
+        attr: { value: this.searchQuery }
+      });
+      search.addEventListener("input", () => {
+        this.searchQuery = search.value;
+        void this.renderList();
+      });
     }
     tb.createEl("button", { text: "\u5237\u65B0", cls: "omni-chip omni-chip-refresh" }).addEventListener("click", () => {
       void this.refreshList();
@@ -5447,6 +5629,36 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
         });
       }
     }
+  }
+  renderPresetBar() {
+    if (!this.presetsEl) return;
+    this.presetsEl.empty();
+    if (this.mode !== "collections") {
+      this.presetsEl.addClass("is-hidden");
+      return;
+    }
+    this.presetsEl.removeClass("is-hidden");
+    for (const p of VIEW_PRESETS) {
+      this.presetsEl.createEl("button", { text: p.label, cls: `omni-chip${this.activePreset === p.key ? " omni-chip-active" : ""}` }).addEventListener("click", () => this.applyPreset(p.key));
+    }
+  }
+  applyPreset(key) {
+    const preset = VIEW_PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    this.activePreset = key;
+    this.statusFilter = preset.filters.status ?? "all";
+    this.priorityFilter = preset.filters.priority ?? "all";
+    this.ratedOnly = preset.filters.ratedOnly ?? false;
+    this.recentDays = preset.filters.recentDays ?? 0;
+    this.saveTypeFilter = key === "watchLater" ? "watch_later" : "all";
+    this.renderToolbar();
+    void this.renderList();
+  }
+  platformBadge(parent, platform) {
+    const m = platformMeta(platform);
+    const b = parent.createEl("span", { text: m.label, cls: "omni-badge omni-badge-platform" });
+    b.style.setProperty("--omni-platform", m.color);
+    return b;
   }
   async refreshList() {
     try {
@@ -5482,9 +5694,22 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     else if (this.statusFilter === "organized") filter.status = "organized";
     else if (this.statusFilter === "archived") filter.status = "archived";
     if (this.priorityFilter !== "all") filter.priority = this.priorityFilter;
+    if (this.searchQuery.trim()) filter.keyword = this.searchQuery;
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== "all") items = items.filter((i) => i.saveType === this.saveTypeFilter);
+    if (this.sortByRating) {
+      items = [...items].sort((a, b) => {
+        const ra = a.rating ?? 0;
+        const rb = b.rating ?? 0;
+        return rb - ra || new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime();
+      });
+    }
+    if (this.ratedOnly) items = items.filter((i) => !!i.rating);
+    if (this.recentDays > 0) {
+      const cutoff = Date.now() - this.recentDays * 864e5;
+      items = items.filter((i) => new Date(i.collectedAt).getTime() >= cutoff);
+    }
     this.totalEl.setText(`\u5171 ${this.items.length} \u6761\u6536\u85CF${this.platformFilter ? `\uFF08${PLATFORMS2.find((p) => p.key === this.platformFilter)?.label ?? this.platformFilter}\uFF09` : ""}\uFF0C\u5F53\u524D\u663E\u793A ${items.length} \u6761`);
     if (items.length === 0) {
       this.listEl.createEl("div", { text: "\u6682\u65E0\u6536\u85CF\uFF08\u5230\u4FA7\u8FB9\u680F\u70B9\u300C\u540C\u6B65\u5168\u90E8\u5E73\u53F0\u300D\uFF09", cls: "omni-empty" });
@@ -5493,7 +5718,10 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     if (this.viewMode === "card") {
       const grid = this.listEl.createEl("div", { cls: "omni-card-grid" });
       for (const item of items) {
+        const m = platformMeta(item.platform);
         const card = grid.createEl("div", { cls: "omni-card" });
+        card.style.setProperty("--omni-platform", m.color);
+        if (item.contentStatus === "deleted") card.addClass("omni-card-deleted");
         const imgBox = card.createEl("div", { cls: "omni-card-cover-wrap" });
         if (item.coverUrl) {
           imgBox.createEl("img", { cls: "omni-card-cover", attr: { referrerpolicy: "no-referrer", loading: "lazy" } });
@@ -5502,12 +5730,19 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
             if (img && src) img.setAttribute("src", src);
           });
         } else {
-          imgBox.createEl("div", { cls: "omni-card-cover omni-card-cover-empty" });
+          imgBox.createEl("div", { cls: "omni-card-cover omni-card-cover-empty" }).createEl("span", { text: m.label });
         }
+        const flags = imgBox.createEl("div", { cls: "omni-card-flags" });
+        if (item.contentStatus === "deleted") flags.createEl("span", { text: "\u5931\u6548", cls: "omni-flag omni-flag-danger" });
+        else if (item.organizeStatus === "archived") flags.createEl("span", { text: "\u5DF2\u5F52\u6863", cls: "omni-flag" });
+        else if (item.organizeStatus === "unorganized") flags.createEl("span", { text: "\u5F85\u6574\u7406", cls: "omni-flag omni-flag-warn" });
+        if (item.saveType === "watch_later") flags.createEl("span", { text: "\u7A0D\u540E", cls: "omni-flag omni-flag-info" });
+        if (item.rating) flags.createEl("span", { text: `\u2605${item.rating}`, cls: "omni-flag omni-flag-star" });
         card.createEl("div", { text: item.title || item.platformItemId, cls: "omni-card-title" });
         const meta = card.createEl("div", { cls: "omni-row-meta" });
-        meta.createEl("span", { text: PLATFORMS2.find((p) => p.key === item.platform)?.label ?? item.platform, cls: "omni-badge omni-badge-platform" });
+        this.platformBadge(meta, item.platform);
         meta.createEl("span", { text: item.saveType === "liked" ? "\u70B9\u8D5E" : item.saveType === "watch_later" ? "\u7A0D\u540E\u518D\u770B" : "\u6536\u85CF", cls: "omni-badge" });
+        if (item.groupName) meta.createEl("span", { text: `\u7EC4:${item.groupName}`, cls: "omni-badge omni-badge-group" });
         card.addEventListener("click", () => this.source.onOpenDetail(item.id));
       }
       return;
@@ -5527,13 +5762,14 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
       main.createEl("a", { text: item.title || item.platformItemId, href: item.url, cls: "omni-title" });
       main.addEventListener("click", () => this.source.onOpenDetail(item.id));
       const meta = main.createEl("div", { cls: "omni-row-meta" });
-      meta.createEl("span", { text: PLATFORMS2.find((p) => p.key === item.platform)?.label ?? item.platform, cls: "omni-badge omni-badge-platform" });
+      this.platformBadge(meta, item.platform);
       meta.createEl("span", { text: item.saveType === "liked" ? "\u70B9\u8D5E" : item.saveType === "watch_later" ? "\u7A0D\u540E\u518D\u770B" : "\u6536\u85CF", cls: "omni-badge" });
       if (item.contentStatus === "deleted") {
         meta.createEl("span", { text: "\u5931\u6548", cls: "omni-badge omni-badge-deleted" });
         row.addClass("omni-row-deleted");
       }
       meta.createEl("span", { text: PRIORITIES.find((p) => p.key === item.priority)?.label ?? item.priority, cls: "omni-badge omni-badge-priority" });
+      if (item.rating) meta.createEl("span", { text: `\u2605${item.rating}`, cls: "omni-badge omni-badge-rating" });
       if (item.groupName) meta.createEl("span", { text: `\u7EC4:${item.groupName}`, cls: "omni-badge omni-badge-group" });
       for (const t of item.tags ?? []) meta.createEl("span", { text: `#${t}`, cls: "omni-badge omni-badge-tag" });
       for (const t of item.topics ?? []) meta.createEl("span", { text: `\u25CE${t}`, cls: "omni-badge omni-badge-topic" });
@@ -5620,6 +5856,7 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
     else if (this.statusFilter === "organized") filter.status = "organized";
     else if (this.statusFilter === "archived") filter.status = "archived";
     if (this.priorityFilter !== "all") filter.priority = this.priorityFilter;
+    if (this.searchQuery.trim()) filter.keyword = this.searchQuery;
     let items = filterCollections(this.items, filter);
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== "all") items = items.filter((i) => i.saveType === this.saveTypeFilter);
@@ -5643,6 +5880,14 @@ var OmniCollectionListView = class extends import_obsidian6.ItemView {
       this.selected.clear();
       this.renderBatchBar();
       void this.renderList();
+    });
+    bar.createEl("button", { text: "\u590D\u5236\u94FE\u63A5", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+      const urls = this.items.filter((i) => this.selected.has(i.id)).map((i) => i.url);
+      if (urls.length === 0) {
+        new import_obsidian6.Notice("\u8BF7\u5148\u52FE\u9009\u6536\u85CF");
+        return;
+      }
+      void navigator.clipboard.writeText(urls.join("\n")).then(() => new import_obsidian6.Notice(`\u5DF2\u590D\u5236 ${urls.length} \u6761\u94FE\u63A5`)).catch((e) => new import_obsidian6.Notice(`\u590D\u5236\u5931\u8D25\uFF1A${e.message}`));
     });
     bar.createEl("button", { text: "\u6279\u91CF Tag", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("tag"));
     bar.createEl("button", { text: "\u6279\u91CF Topic", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => this.promptBatch("topic"));
@@ -5681,7 +5926,17 @@ var import_obsidian8 = require("obsidian");
 
 // src/ui/manual-ai.ts
 var import_obsidian7 = require("obsidian");
-function buildManualTemplate(item) {
+
+// src/ui/manual-template.ts
+function vocabLines(vocabulary) {
+  if (!vocabulary) return [];
+  const lines = ["Tag/Topic/\u5206\u7EC4\u5EFA\u8BAE\u8BF7\u4F18\u5148\u4ECE\u4E0B\u9762\u53D7\u63A7\u8BCD\u8868\u4E2D\u9009\u7528\uFF1B\u786E\u65E0\u5408\u9002\u518D\u65B0\u9020\u3002"];
+  if ((vocabulary.tags ?? []).length > 0) lines.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 Tag\uFF1A${vocabulary.tags.join(", ")}`);
+  if ((vocabulary.topics ?? []).length > 0) lines.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 Topic\uFF1A${vocabulary.topics.join(", ")}`);
+  if ((vocabulary.groups ?? []).length > 0) lines.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 \u5206\u7EC4\uFF1A${vocabulary.groups.join(", ")}`);
+  return lines.length > 1 ? ["", ...lines] : [];
+}
+function buildManualTemplate(item, vocabulary) {
   return [
     "\u4F60\u662F\u6536\u85CF\u6574\u7406\u52A9\u624B\u3002\u6839\u636E\u4E0B\u9762\u7684\u6536\u85CF\u5185\u5BB9\uFF0C\u8F93\u51FA JSON \u6570\u7EC4\uFF0C\u5143\u7D20\u7ED3\u6784\uFF1A",
     '{"type":"suggested_tag|suggested_topic|suggested_summary|suggested_group","payload":"...","confidence":0-1}\u3002',
@@ -5689,6 +5944,7 @@ function buildManualTemplate(item) {
     "suggested_summary \u4E3A 1-2 \u53E5\u6458\u8981\u5B57\u7B26\u4E32\uFF1Bsuggested_group \u4E3A\u6536\u85CF\u5206\u7EC4\u540D\u3002\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981\u989D\u5916\u89E3\u91CA\u3002",
     "",
     `\u5DF2\u6709Tag\uFF1A${(item.tags ?? []).length > 0 ? (item.tags ?? []).join(", ") : "\u65E0"}`,
+    ...vocabLines(vocabulary),
     "--- \u6536\u85CF\u5185\u5BB9 ---",
     `\u5E73\u53F0\uFF1A${item.platform}`,
     `\u6807\u9898\uFF1A${item.title}`,
@@ -5697,14 +5953,42 @@ function buildManualTemplate(item) {
     item.description ? `\u7B80\u4ECB\uFF1A${item.description.slice(0, 500)}` : ""
   ].filter((line) => line !== "").join("\n");
 }
-function openManualAIModal(app, item, source) {
+function buildManualBatchTemplate(items, vocabulary) {
+  const list = items.map(
+    (item, i) => `${i}. \u6807\u9898\uFF1A${item.title}
+   \u5E73\u53F0\uFF1A${item.platform}
+   \u94FE\u63A5\uFF1A${item.url}
+` + (item.description ? `   \u7B80\u4ECB\uFF1A${item.description.slice(0, 300)}
+` : "")
+  ).join("\n");
+  const vocab = [];
+  if (vocabulary) {
+    if ((vocabulary.tags ?? []).length > 0) vocab.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 Tag\uFF1A${vocabulary.tags.join(", ")}`);
+    if ((vocabulary.topics ?? []).length > 0) vocab.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 Topic\uFF1A${vocabulary.topics.join(", ")}`);
+    if ((vocabulary.groups ?? []).length > 0) vocab.push(`\u53D7\u63A7\u8BCD\u8868 \xB7 \u5206\u7EC4\uFF1A${vocabulary.groups.join(", ")}`);
+  }
+  return [
+    "\u4F60\u662F\u6536\u85CF\u6574\u7406\u52A9\u624B\u3002\u4E0B\u9762\u6709 " + items.length + " \u6761\u6536\u85CF\uFF0C\u8BF7\u9010\u6761\u8F93\u51FA JSON \u6570\u7EC4\uFF0C\u5143\u7D20\u7ED3\u6784\uFF1A",
+    '[{"index":0,"suggestions":[{"type":"suggested_tag|suggested_topic|suggested_summary|suggested_group","payload":"...","confidence":0-1}]}]',
+    "index \u5FC5\u987B\u4E0E\u6536\u85CF\u7F16\u53F7\u4E00\u4E00\u5BF9\u5E94\uFF080 \u5F00\u59CB\uFF09\uFF1Bsuggested_tag \u7684 payload \u4E3A\u5B57\u7B26\u4E32\u6570\u7EC4 JSON\uFF1B",
+    "suggested_topic \u4E3A\u5355\u4E2A\u4E3B\u9898\u5B57\u7B26\u4E32\uFF1Bsuggested_summary \u4E3A 1-2 \u53E5\u6458\u8981\uFF1B",
+    "suggested_group \u4E3A\u6536\u85CF\u5206\u7EC4\u540D\u3002\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981\u989D\u5916\u89E3\u91CA\u3002",
+    ...vocab.length > 0 ? ["", "Tag/Topic/\u5206\u7EC4\u5EFA\u8BAE\u8BF7\u4F18\u5148\u4ECE\u53D7\u63A7\u8BCD\u8868\u4E2D\u9009\u7528\uFF1B\u786E\u65E0\u5408\u9002\u518D\u65B0\u9020\u3002", ...vocab] : [],
+    "",
+    "--- \u6536\u85CF\u5217\u8868 ---",
+    list
+  ].join("\n");
+}
+
+// src/ui/manual-ai.ts
+function openManualAIModal(app, item, source, vocabulary) {
   const modal = new import_obsidian7.Modal(app);
   modal.titleEl.setText("Manual \u6A21\u5F0F AI\uFF08PRD 19.3\uFF09");
   modal.contentEl.createEl("h4", { text: "1) \u590D\u5236\u6A21\u677F\u5230\u4EFB\u610F AI \u5DE5\u5177\uFF08ChatGPT/DeepSeek \u7B49\uFF09" });
   const tpl = modal.contentEl.createEl("textarea", {
     attr: { rows: "12", style: "width:100%;" }
   });
-  tpl.value = buildManualTemplate(item);
+  tpl.value = buildManualTemplate(item, vocabulary);
   modal.contentEl.createEl("button", { text: "\u590D\u5236\u6A21\u677F", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
     tpl.select();
     document.execCommand("copy");
@@ -5727,213 +6011,6 @@ function openManualAIModal(app, item, source) {
   modal.open();
 }
 
-// src/ui/collection-detail.ts
-var VIEW_TYPE_OMNI_DETAIL = "omni-collector-detail";
-var PLATFORM_LABELS = {
-  bilibili: "B\u7AD9",
-  youtube: "YouTube",
-  xiaohongshu: "\u5C0F\u7EA2\u4E66",
-  makerworld: "MakerWorld",
-  xiaoheihe: "\u5C0F\u9ED1\u76D2"
-};
-function embedUrl(item) {
-  if (item.platform === "bilibili") {
-    const m = /(BV[0-9A-Za-z]+)/.exec(item.url);
-    return m ? `https://player.bilibili.com/player.html?bvid=${m[1]}&page=1` : null;
-  }
-  if (item.platform === "youtube") {
-    const m = /(?:v=|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})/.exec(item.url);
-    return m ? `https://www.youtube.com/embed/${m[1]}` : null;
-  }
-  return null;
-}
-var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
-  constructor(leaf, source) {
-    super(leaf);
-    __publicField(this, "source", source);
-    __publicField(this, "currentId", "");
-  }
-  getViewType() {
-    return VIEW_TYPE_OMNI_DETAIL;
-  }
-  getDisplayText() {
-    return "Omni Collector \u5185\u5BB9\u9884\u89C8";
-  }
-  getState() {
-    return { collectionId: this.currentId };
-  }
-  async setState(state) {
-    this.currentId = state.collectionId ?? "";
-    await this.renderContent();
-  }
-  async onOpen() {
-    this.currentId = this.getState().collectionId ?? "";
-    await this.renderContent();
-  }
-  async renderContent() {
-    const container = this.containerEl.children[1];
-    container.empty();
-    container.addClass("omni-detail");
-    if (!this.currentId) {
-      container.createEl("div", { text: "\u672A\u9009\u62E9\u6536\u85CF", cls: "omni-empty" });
-      return;
-    }
-    const item = await this.source.get(this.currentId);
-    if (!item) {
-      container.createEl("div", { text: "\u6536\u85CF\u4E0D\u5B58\u5728", cls: "omni-empty" });
-      return;
-    }
-    if (item.coverUrl) {
-      const img = container.createEl("img", { cls: "omni-detail-cover", attr: { referrerpolicy: "no-referrer" } });
-      void this.source.ensureCover(item.coverUrl).then((src) => {
-        if (src) img.setAttribute("src", src);
-      });
-    }
-    container.createEl("div", { text: item.title || item.platformItemId, cls: "omni-detail-title" });
-    const meta = container.createEl("div", { cls: "omni-row-meta" });
-    if (item.contentStatus === "deleted") {
-      meta.createEl("span", { text: "\u5931\u6548", cls: "omni-badge omni-badge-deleted" });
-    }
-    meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform" });
-    meta.createEl("span", { text: item.author ?? "\u672A\u77E5\u4F5C\u8005", cls: "omni-badge" });
-    meta.createEl("span", { text: item.contentType === "video" ? "\u89C6\u9891" : item.contentType, cls: "omni-badge" });
-    meta.createEl("span", { text: new Date(item.collectedAt).toLocaleDateString("zh-CN"), cls: "omni-meta-text" });
-    const embed = embedUrl(item);
-    if (embed) {
-      container.createEl("div", { cls: "omni-detail-player" }).createEl("iframe", {
-        attr: {
-          src: embed,
-          allow: "fullscreen; picture-in-picture; encrypted-media",
-          allowfullscreen: "",
-          style: "width:100%;aspect-ratio:16/9;border:0;border-radius:8px;"
-        }
-      });
-    } else {
-      container.createEl("button", { text: "\u5728\u6D4F\u89C8\u5668\u6253\u5F00\u539F\u6587", cls: "omni-btn omni-btn-primary" }).addEventListener("click", () => {
-        void window.open(item.url, "_blank");
-      });
-    }
-    if (item.description) {
-      container.createEl("div", { text: "\u7B80\u4ECB", cls: "omni-section-title" });
-      container.createEl("div", { text: item.description, cls: "omni-detail-desc" });
-    }
-    const bodySection = container.createEl("div", { cls: "omni-detail-body" });
-    const bodyBtn = bodySection.createEl("button", { text: "\u52A0\u8F7D\u6B63\u6587", cls: "omni-btn omni-btn-sm" });
-    const bodyText = bodySection.createEl("div", { cls: "omni-detail-desc", attr: { style: "display:none;" } });
-    bodyBtn.addEventListener("click", () => {
-      bodyBtn.setText("\u52A0\u8F7D\u4E2D\u2026");
-      bodyBtn.addClass("omni-btn-disabled");
-      void this.source.fetchText(item.url).then((res) => {
-        bodyBtn.setText("\u91CD\u65B0\u52A0\u8F7D\u6B63\u6587");
-        bodyBtn.removeClass("omni-btn-disabled");
-        bodyText.setText(res.text || "\u6B63\u6587\u6682\u4E0D\u53EF\u7528\uFF08\u5E73\u53F0\u9650\u5236\u6216\u9700\u91CD\u65B0\u540C\u6B65\uFF09");
-        bodyText.show();
-        if (res.comments && res.comments.length > 0) {
-          let section = container.querySelector(".omni-detail-comments");
-          if (!section) {
-            container.createEl("div", { text: "\u8BC4\u8BBA", cls: "omni-section-title" });
-            section = container.createEl("div", { cls: "omni-detail-comments" });
-          }
-          for (const c of res.comments) {
-            const row = section.createEl("div", { cls: "omni-comment" });
-            row.createEl("span", { text: c.author, cls: "omni-comment-author" });
-            row.createEl("span", { text: c.content, cls: "omni-comment-content" });
-          }
-        }
-      }).catch((e) => {
-        bodyBtn.setText("\u52A0\u8F7D\u6B63\u6587");
-        bodyBtn.removeClass("omni-btn-disabled");
-        new import_obsidian8.Notice(`\u6B63\u6587\u52A0\u8F7D\u5931\u8D25\uFF1A${e.message}`);
-      });
-    });
-    const chips = container.createEl("div", { cls: "omni-detail-chips" });
-    for (const t of item.tags ?? []) chips.createEl("span", { text: `#${t}`, cls: "omni-badge omni-badge-tag" });
-    for (const t of item.topics ?? []) chips.createEl("span", { text: `\u25CE${t}`, cls: "omni-badge omni-badge-topic" });
-    const tagBtn = chips.createEl("button", { text: "\uFF0BTag", cls: "omni-chip" });
-    tagBtn.addEventListener("click", () => this.promptText("\u6253 Tag", "\u8F93\u5165\u6807\u7B7E\u540D", (v) => this.source.onTag(item.id, v)));
-    const topicBtn = chips.createEl("button", { text: "\uFF0BTopic", cls: "omni-chip" });
-    topicBtn.addEventListener("click", () => this.promptText("\u5F52\u5165 Topic", "\u8F93\u5165 Topic \u540D", (v) => this.source.onTopic(item.id, v)));
-    const manualBtn = chips.createEl("button", { text: "Manual AI", cls: "omni-chip" });
-    manualBtn.addEventListener(
-      "click",
-      () => openManualAIModal(this.app, item, { submit: (id, reply) => this.source.submitManualAI(id, reply) })
-    );
-    if ((item.comments ?? []).length > 0) {
-      container.createEl("div", { text: "\u8BC4\u8BBA", cls: "omni-section-title" });
-      const comments = container.createEl("div", { cls: "omni-detail-comments" });
-      for (const c of item.comments ?? []) {
-        const row = comments.createEl("div", { cls: "omni-comment" });
-        row.createEl("span", { text: c.author, cls: "omni-comment-author" });
-        row.createEl("span", { text: c.content, cls: "omni-comment-content" });
-      }
-    }
-    if ((item.linkedFiles ?? []).length > 0) {
-      container.createEl("div", { text: "\u672C\u5730\u6587\u4EF6", cls: "omni-section-title" });
-      const files = container.createEl("div", { cls: "omni-detail-files" });
-      for (const f of item.linkedFiles ?? []) {
-        const name = f.split(/[\\/]/).pop() ?? f;
-        files.createEl("div", { text: `\u{1F4C4} ${name}`, cls: "omni-file-row", attr: { title: f } });
-      }
-      const openBtn = container.createEl("button", { text: "\u6253\u5F00\u7B14\u8BB0", cls: "omni-btn omni-btn-sm" });
-      openBtn.addEventListener("click", () => {
-        const first = (item.linkedFiles ?? [])[0];
-        if (first) this.source.openLocalFile(first);
-      });
-    }
-    if ((item.related ?? []).length > 0) {
-      container.createEl("div", { text: "\u76F8\u5173\u6536\u85CF", cls: "omni-section-title" });
-      const relatedBox = container.createEl("div", { cls: "omni-detail-related" });
-      for (const r of item.related ?? []) {
-        const row = relatedBox.createEl("div", { cls: "omni-related-row" });
-        row.createEl("span", { text: PLATFORM_LABELS[r.platform] ?? r.platform, cls: "omni-badge omni-badge-platform" });
-        row.createEl("span", { text: r.title || r.id, cls: "omni-related-title" });
-        row.addEventListener("click", () => {
-          this.currentId = r.id;
-          void this.renderContent();
-        });
-      }
-    }
-    const actions = container.createEl("div", { cls: "omni-detail-actions" });
-    const orgBtn = actions.createEl("button", { text: `\u6574\u7406\uFF1A${item.organizeStatus}\uFF08\u70B9\u51FB\u63A8\u8FDB\uFF09`, cls: "omni-act" });
-    orgBtn.addEventListener("click", () => {
-      const next = item.organizeStatus === "unorganized" ? "viewed" : item.organizeStatus === "viewed" ? "organized" : "archived";
-      void this.source.onOrganize(item.id, next).then(() => {
-        item.organizeStatus = next;
-        orgBtn.setText(`\u6574\u7406\uFF1A${next}\uFF08\u70B9\u51FB\u63A8\u8FDB\uFF09`);
-      });
-    });
-    const priBtn = actions.createEl("button", { text: `\u4F18\u5148\u7EA7\uFF1A${item.priority}`, cls: "omni-act omni-act-priority" });
-    priBtn.addEventListener("click", () => {
-      const order = ["normal", "important", "project", "knowledge"];
-      const next = order[(order.indexOf(item.priority) + 1) % order.length];
-      void this.source.onPriority(item.id, next).then(() => {
-        item.priority = next;
-        priBtn.setText(`\u4F18\u5148\u7EA7\uFF1A${next}`);
-      });
-    });
-  }
-  promptText(title, placeholder, submit) {
-    const modal = new import_obsidian8.Modal(this.app);
-    modal.titleEl.setText(title);
-    const input = modal.contentEl.createEl("input", { type: "text", placeholder });
-    const done = () => {
-      if (input.value.trim()) {
-        void submit(input.value.trim()).then(() => {
-          modal.close();
-          new import_obsidian8.Notice("\u5DF2\u4FDD\u5B58");
-        }).catch((err) => new import_obsidian8.Notice(`\u4FDD\u5B58\u5931\u8D25\uFF1A${err.message}`));
-      }
-    };
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") done();
-    });
-    modal.contentEl.createEl("button", { text: "\u786E\u5B9A", cls: "omni-btn omni-btn-primary" }).addEventListener("click", done);
-    modal.open();
-  }
-  async onClose() {
-  }
-};
-
 // src/markdown/markdown-builder.ts
 var SYSTEM_START = "<!-- OMNI_SYSTEM_START -->";
 var SYSTEM_END = "<!-- OMNI_SYSTEM_END -->";
@@ -5946,6 +6023,13 @@ function escapeTitleHash(title) {
 function sanitizeFilename(name) {
   return (name || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
 }
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function renderRating(rating) {
+  const n = Math.max(0, Math.min(5, Math.round(rating ?? 0)));
+  return n === 0 ? "" : `${"\u2605".repeat(n)}${"\u2606".repeat(5 - n)}\uFF08${n}/5\uFF09`;
+}
 var MarkdownBuilder = class {
   buildFromDTO(dto) {
     const system = [
@@ -5955,6 +6039,8 @@ var MarkdownBuilder = class {
       `sync_status: ${yamlString(dto.syncStatus)}`
     ].join("\n");
     const comments = (dto.comments ?? []).map((c) => `- **${c.author}**\uFF1A${c.content}`).join("\n");
+    const starred = (dto.comments ?? []).filter((c) => c.starred).map((c) => `- **${c.author}**\uFF1A${c.content}`).join("\n");
+    const ratingText = renderRating(dto.rating);
     const frontmatter = this.buildFrontmatter(dto);
     const graphLinks = this.buildGraphLinks(dto);
     return [
@@ -5980,10 +6066,8 @@ var MarkdownBuilder = class {
       "<!-- \u4EE5\u4E0B\u4E3A\u7528\u6237\u79C1\u6709\u7F16\u8F91\u533A\uFF0C\u4EFB\u4F55\u81EA\u52A8\u5316\u903B\u8F91\u7981\u6B62\u4FEE\u6539 -->",
       "## \u6211\u7684\u7B14\u8BB0",
       "",
-      "## \u7CBE\u9009\u8BC4\u8BBA",
-      "",
-      "## \u8BC4\u5206\u4E0E\u4F18\u5148\u7EA7",
-      ""
+      ...starred ? ["## \u7CBE\u9009\u8BC4\u8BBA", "", starred, ""] : ["## \u7CBE\u9009\u8BC4\u8BBA", ""],
+      ...ratingText ? ["## \u8BC4\u5206\u4E0E\u4F18\u5148\u7EA7", "", ratingText, ""] : ["## \u8BC4\u5206\u4E0E\u4F18\u5148\u7EA7", ""]
     ].join("\n");
   }
   buildFrontmatter(dto) {
@@ -6057,41 +6141,101 @@ ${links}
   /** Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。 */
   buildTopicHub(topicName, noteLinks) {
     const name = (topicName || "\u672A\u547D\u540D\u4E3B\u9898").trim();
-    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
-    return [
-      "---",
-      `topic: ${yamlString(name)}`,
-      `tags: ["topic/${sanitizeFilename(name)}"]`,
-      "---",
-      "",
-      `# ${name}`,
-      "",
-      "> \u4E3B\u9898\u805A\u5408\u9875\uFF08Omni Collector \u81EA\u52A8\u751F\u6210\uFF0C\u4FEE\u6539\u4F1A\u88AB\u8986\u76D6\uFF09",
-      "",
-      "## \u6536\u85CF",
-      "",
-      links,
-      ""
-    ].join("\n");
+    return this.buildHub(name, noteLinks, {
+      frontmatterKey: "topic",
+      tags: [JSON.stringify(`topic/${sanitizeFilename(name)}`)],
+      dataviewField: "topics"
+    });
   }
   /** Tag 聚合页（PRD 16 / 关系图谱联动）：主 Tag 节点 + 成员笔记 wikilink。 */
   buildTagHub(tagName, noteLinks) {
     const name = (tagName || "\u672A\u547D\u540D\u6807\u7B7E").trim();
-    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
+    return this.buildHub(name, noteLinks, {
+      frontmatterKey: "tag",
+      tags: [JSON.stringify(sanitizeFilename(name))],
+      dataviewField: "tags"
+    });
+  }
+  /**
+   * 聚合页统一构造（PRD 17/16）：与收藏笔记相同的区域隔离协议——
+   * 系统区（成员 wikilink + Dataview 动态索引）自动维护；「我的整理」起为用户区，自动化禁止触碰。
+   * frontmatter 的 aliases 供用户自定义别名（图谱/解析原生生效）。
+   */
+  buildHub(name, noteLinks, cfg) {
     return [
       "---",
-      `tags: ["${sanitizeFilename(name)}"]`,
+      `${cfg.frontmatterKey}: ${yamlString(name)}`,
+      `tags: [${cfg.tags.join(", ")}]`,
+      "aliases: []",
       "---",
       "",
-      `# ${name}`,
+      `# ${escapeTitleHash(name)}`,
       "",
-      "> \u6807\u7B7E\u805A\u5408\u9875\uFF08Omni Collector \u81EA\u52A8\u751F\u6210\uFF0C\u4FEE\u6539\u4F1A\u88AB\u8986\u76D6\uFF09",
+      `> \u805A\u5408\u9875\u8BF4\u660E\uFF1A\u7CFB\u7EDF\u533A\uFF08\u6807\u8BB0\u6CE8\u91CA\u4E4B\u95F4\uFF09\u7531 Omni Collector \u81EA\u52A8\u7EF4\u62A4\uFF1B\u300C## \u6211\u7684\u6574\u7406\u300D\u53CA\u4E4B\u540E\u4E3A\u7528\u6237\u533A\uFF0C\u4EFB\u4F55\u81EA\u52A8\u5316\u903B\u8F91\u7981\u6B62\u4FEE\u6539\u3002`,
       "",
-      "## \u6536\u85CF",
+      SYSTEM_START,
+      this.buildHubSystemZone(name, noteLinks, cfg.dataviewField),
+      SYSTEM_END,
       "",
-      links,
+      "## \u6211\u7684\u6574\u7406",
       ""
     ].join("\n");
+  }
+  /** 聚合页系统区：成员 wikilink（图谱边）+ Dataview 动态索引（按 frontmatter 元数据实时查询）。 */
+  buildHubSystemZone(name, noteLinks, dataviewField) {
+    const links = [...new Set(noteLinks.filter(Boolean))].map((l) => `- [[${l.replace(/\.md$/i, "")}]]`).join("\n");
+    const safeName = name.replace(/"/g, "'");
+    return [
+      "## \u6536\u85CF",
+      "",
+      links || "\uFF08\u6682\u65E0\u6210\u5458\uFF09",
+      "",
+      "## \u52A8\u6001\u7D22\u5F15",
+      "",
+      "```dataview",
+      "TABLE priority AS \u4F18\u5148\u7EA7, organize_status AS \u6574\u7406\u72B6\u6001, collected_at AS \u6536\u85CF\u65E5\u671F",
+      'FROM "Omni Collector"',
+      `WHERE contains(${dataviewField}, "${safeName}")`,
+      "SORT collected_at DESC",
+      "```",
+      ""
+    ].join("\n");
+  }
+  /**
+   * 更新聚合页系统区（成员/标题变化时）：只替换标记内内容并镜像 H1，
+   * frontmatter（含用户 aliases）与「我的整理」用户区原样保留。
+   * 返回 null 表示文件缺少系统区标记（旧格式，由调用方决定升级策略）。
+   */
+  replaceHubSystemZone(md, hubTitle, noteLinks, dataviewField) {
+    if (!this.validateMarkers(md)) return null;
+    const start = md.indexOf(SYSTEM_START);
+    const end = md.indexOf(SYSTEM_END) + SYSTEM_END.length;
+    const head = md.slice(0, start);
+    const tail = md.slice(end);
+    const system = `${SYSTEM_START}
+${this.buildHubSystemZone(hubTitle, noteLinks, dataviewField)}${SYSTEM_END}`;
+    const updatedHead = head.replace(/^# .*$/m, `# ${escapeTitleHash(hubTitle)}`);
+    return `${updatedHead}${system}${tail}`;
+  }
+  /**
+   * 替换用户区指定小节的内容（仅系统区标记之后）。
+   * 仅用于物化用户在插件 UI 的显式操作（评分 PRD 29.2 / 精选评论 PRD 7.3），
+   * 等同用户本人编辑，不属于自动化覆盖。
+   */
+  replaceUserZoneSection(md, headerKeyword, content) {
+    if (!this.validateMarkers(md)) return null;
+    const markerIdx = md.indexOf(SYSTEM_END) + SYSTEM_END.length;
+    const head = md.slice(0, markerIdx);
+    const tail = md.slice(markerIdx);
+    const re = new RegExp(
+      `(^##\\s+.*${escapeRegExp(headerKeyword)}.*\\n)([\\s\\S]*?)(?=^##\\s|^#\\s|(?![\\s\\S]))`,
+      "m"
+    );
+    if (!re.test(tail)) return null;
+    const body = content.trim() ? `${content.trim()}
+
+` : "\n";
+    return head + tail.replace(re, `$1${body}`);
   }
   extractUserZone(md) {
     const zone = {};
@@ -6108,35 +6252,310 @@ ${links}
   }
 };
 
+// src/ui/collection-detail.ts
+var VIEW_TYPE_OMNI_DETAIL = "omni-collector-detail";
+var PLATFORM_LABELS = {
+  bilibili: "B\u7AD9",
+  youtube: "YouTube",
+  xiaohongshu: "\u5C0F\u7EA2\u4E66",
+  makerworld: "MakerWorld",
+  xiaoheihe: "\u5C0F\u9ED1\u76D2"
+};
+function embedUrl(item) {
+  if (item.platform === "bilibili") {
+    const m = /(BV[0-9A-Za-z]+)/.exec(item.url);
+    return m ? `https://player.bilibili.com/player.html?bvid=${m[1]}&page=1` : null;
+  }
+  if (item.platform === "youtube") {
+    const m = /(?:v=|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})/.exec(item.url);
+    return m ? `https://www.youtube.com/embed/${m[1]}` : null;
+  }
+  return null;
+}
+var OmniCollectionDetailView = class extends import_obsidian8.ItemView {
+  constructor(leaf, source) {
+    super(leaf);
+    __publicField(this, "source", source);
+    __publicField(this, "currentId", "");
+  }
+  getViewType() {
+    return VIEW_TYPE_OMNI_DETAIL;
+  }
+  getDisplayText() {
+    return "Omni Collector \u5185\u5BB9\u9884\u89C8";
+  }
+  getState() {
+    return { collectionId: this.currentId };
+  }
+  async setState(state) {
+    this.currentId = state.collectionId ?? "";
+    await this.renderContent();
+  }
+  async onOpen() {
+    this.currentId = this.getState().collectionId ?? "";
+    await this.renderContent();
+  }
+  async renderContent() {
+    const container = this.containerEl.children[1];
+    container.empty();
+    container.addClass("omni-detail");
+    if (!this.currentId) {
+      container.createEl("div", { text: "\u672A\u9009\u62E9\u6536\u85CF", cls: "omni-empty" });
+      return;
+    }
+    const item = await this.source.get(this.currentId);
+    if (!item) {
+      container.createEl("div", { text: "\u6536\u85CF\u4E0D\u5B58\u5728", cls: "omni-empty" });
+      return;
+    }
+    const pm = platformMeta(item.platform);
+    container.style.setProperty("--omni-platform", pm.color);
+    if (item.coverUrl) {
+      const img = container.createEl("img", { cls: "omni-detail-cover", attr: { referrerpolicy: "no-referrer" } });
+      void this.source.ensureCover(item.coverUrl).then((src) => {
+        if (src) img.setAttribute("src", src);
+      });
+    }
+    container.createEl("div", { text: item.title || item.platformItemId, cls: "omni-detail-title" });
+    const meta = container.createEl("div", { cls: "omni-row-meta" });
+    if (item.contentStatus === "deleted") {
+      meta.createEl("span", { text: "\u5931\u6548", cls: "omni-badge omni-badge-deleted" });
+    }
+    meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform", attr: { style: `--omni-platform:${pm.color};` } });
+    meta.createEl("span", { text: item.author ?? "\u672A\u77E5\u4F5C\u8005", cls: "omni-badge" });
+    meta.createEl("span", { text: item.contentType === "video" ? "\u89C6\u9891" : item.contentType, cls: "omni-badge" });
+    meta.createEl("span", { text: new Date(item.collectedAt).toLocaleDateString("zh-CN"), cls: "omni-meta-text" });
+    const embed = embedUrl(item);
+    if (embed) {
+      container.createEl("div", { cls: "omni-detail-player" }).createEl("iframe", {
+        attr: {
+          src: embed,
+          allow: "fullscreen; picture-in-picture; encrypted-media",
+          allowfullscreen: "",
+          style: "width:100%;aspect-ratio:16/9;border:0;border-radius:8px;"
+        }
+      });
+    } else {
+      container.createEl("button", { text: "\u5728\u6D4F\u89C8\u5668\u6253\u5F00\u539F\u6587", cls: "omni-btn omni-btn-primary" }).addEventListener("click", () => {
+        void window.open(item.url, "_blank");
+      });
+    }
+    if (item.description) {
+      container.createEl("div", { text: "\u7B80\u4ECB", cls: "omni-section-title" });
+      container.createEl("div", { text: item.description, cls: "omni-detail-desc" });
+    }
+    const bodySection = container.createEl("div", { cls: "omni-detail-body" });
+    const bodyBtn = bodySection.createEl("button", { text: "\u52A0\u8F7D\u6B63\u6587", cls: "omni-btn omni-btn-sm" });
+    const bodyText = bodySection.createEl("div", { cls: "omni-detail-desc", attr: { style: "display:none;" } });
+    bodyBtn.addEventListener("click", () => {
+      bodyBtn.setText("\u52A0\u8F7D\u4E2D\u2026");
+      bodyBtn.addClass("omni-btn-disabled");
+      void this.source.fetchText(item.url).then((res) => {
+        bodyBtn.setText("\u91CD\u65B0\u52A0\u8F7D\u6B63\u6587");
+        bodyBtn.removeClass("omni-btn-disabled");
+        bodyText.setText(res.text || "\u6B63\u6587\u6682\u4E0D\u53EF\u7528\uFF08\u5E73\u53F0\u9650\u5236\u6216\u9700\u91CD\u65B0\u540C\u6B65\uFF09");
+        bodyText.show();
+        if (res.comments && res.comments.length > 0) {
+          let section = container.querySelector(".omni-detail-comments");
+          if (!section) {
+            container.createEl("div", { text: "\u8BC4\u8BBA", cls: "omni-section-title" });
+            section = container.createEl("div", { cls: "omni-detail-comments" });
+          }
+          for (const c of res.comments) {
+            const row = section.createEl("div", { cls: "omni-comment" });
+            row.createEl("span", { text: c.author, cls: "omni-comment-author" });
+            row.createEl("span", { text: c.content, cls: "omni-comment-content" });
+          }
+        }
+      }).catch((e) => {
+        bodyBtn.setText("\u52A0\u8F7D\u6B63\u6587");
+        bodyBtn.removeClass("omni-btn-disabled");
+        new import_obsidian8.Notice(`\u6B63\u6587\u52A0\u8F7D\u5931\u8D25\uFF1A${e.message}`);
+      });
+    });
+    const chips = container.createEl("div", { cls: "omni-detail-chips" });
+    for (const t of item.tags ?? []) chips.createEl("span", { text: `#${t}`, cls: "omni-badge omni-badge-tag" });
+    for (const t of item.topics ?? []) chips.createEl("span", { text: `\u25CE${t}`, cls: "omni-badge omni-badge-topic" });
+    const tagBtn = chips.createEl("button", { text: "\uFF0BTag", cls: "omni-chip" });
+    tagBtn.addEventListener("click", () => this.promptText("\u6253 Tag", "\u8F93\u5165\u6807\u7B7E\u540D", (v) => this.source.onTag(item.id, v)));
+    const topicBtn = chips.createEl("button", { text: "\uFF0BTopic", cls: "omni-chip" });
+    topicBtn.addEventListener("click", () => this.promptText("\u5F52\u5165 Topic", "\u8F93\u5165 Topic \u540D", (v) => this.source.onTopic(item.id, v)));
+    const manualBtn = chips.createEl("button", { text: "Manual AI", cls: "omni-chip" });
+    manualBtn.addEventListener("click", () => {
+      void this.source.getVocabulary().catch(() => void 0).then(
+        (vocabulary) => openManualAIModal(
+          this.app,
+          item,
+          { submit: (id, reply) => this.source.submitManualAI(id, reply) },
+          vocabulary
+        )
+      );
+    });
+    if ((item.comments ?? []).length > 0) {
+      container.createEl("div", { text: "\u8BC4\u8BBA", cls: "omni-section-title" });
+      const comments = container.createEl("div", { cls: "omni-detail-comments" });
+      for (const c of item.comments ?? []) {
+        const row = comments.createEl("div", { cls: `omni-comment${c.starred ? " omni-comment-starred" : ""}` });
+        row.createEl("span", { text: c.author, cls: "omni-comment-author" });
+        row.createEl("span", { text: c.content, cls: "omni-comment-content" });
+        if (c.id) {
+          const starBtn = row.createEl("button", {
+            text: c.starred ? "\u2605" : "\u2606",
+            cls: `omni-star${c.starred ? " omni-star-on" : ""}`,
+            attr: { title: c.starred ? "\u53D6\u6D88\u7CBE\u9009" : "\u7CBE\u9009\u6B64\u8BC4\u8BBA" }
+          });
+          starBtn.addEventListener("click", () => {
+            const next = !c.starred;
+            void this.source.onStarComment(item.id, c.id, next).then(() => {
+              c.starred = next;
+              row.toggleClass("omni-comment-starred", next);
+              starBtn.setText(next ? "\u2605" : "\u2606");
+              starBtn.toggleClass("omni-star-on", next);
+              return this.source.materializeStarredComments(item);
+            }).catch((e) => new import_obsidian8.Notice(`\u7CBE\u9009\u8BC4\u8BBA\u5931\u8D25\uFF1A${e.message}`));
+          });
+        }
+      }
+    }
+    const ratingBox = container.createEl("div", { cls: "omni-detail-rating" });
+    ratingBox.createEl("span", { text: "\u6211\u7684\u8BC4\u5206", cls: "omni-section-title" });
+    const starsRow = ratingBox.createEl("div", { cls: "omni-rating-stars" });
+    let current = item.rating ?? 0;
+    const ratingLabel = starsRow.createEl("span", { text: current > 0 ? renderRating(current) : "\u672A\u8BC4\u5206", cls: "omni-rating-label" });
+    const starBtns = [];
+    for (let i = 1; i <= 5; i += 1) {
+      const star = starsRow.createEl("button", {
+        text: i <= current ? "\u2605" : "\u2606",
+        cls: `omni-star${i <= current ? " omni-star-on" : ""}`,
+        attr: { title: `${i} \u661F` }
+      });
+      starBtns.push(star);
+      star.addEventListener("click", () => {
+        const next = i === current ? 0 : i;
+        void this.source.onRating(item.id, next).then(() => {
+          current = next;
+          item.rating = next || null;
+          ratingLabel.setText(next > 0 ? renderRating(next) : "\u672A\u8BC4\u5206");
+          for (let j = 1; j <= 5; j += 1) {
+            starBtns[j - 1].setText(j <= next ? "\u2605" : "\u2606");
+            starBtns[j - 1].toggleClass("omni-star-on", j <= next);
+          }
+          return this.source.materializeRating(item, next);
+        }).catch((e) => new import_obsidian8.Notice(`\u8BC4\u5206\u5931\u8D25\uFF1A${e.message}`));
+      });
+    }
+    if ((item.linkedFiles ?? []).length > 0) {
+      container.createEl("div", { text: "\u672C\u5730\u6587\u4EF6", cls: "omni-section-title" });
+      const files = container.createEl("div", { cls: "omni-detail-files" });
+      for (const f of item.linkedFiles ?? []) {
+        const name = f.split(/[\\/]/).pop() ?? f;
+        files.createEl("div", { text: `\u{1F4C4} ${name}`, cls: "omni-file-row", attr: { title: f } });
+      }
+      const openBtn = container.createEl("button", { text: "\u6253\u5F00\u7B14\u8BB0", cls: "omni-btn omni-btn-sm" });
+      openBtn.addEventListener("click", () => {
+        const first = (item.linkedFiles ?? [])[0];
+        if (first) this.source.openLocalFile(first);
+      });
+    }
+    if (item.groupName) {
+      const size = item.groupSize ?? (item.related ?? []).length + 1;
+      const done = item.groupOrganized ?? 0;
+      container.createEl("div", {
+        text: `\u7CFB\u5217\u300C${item.groupName}\u300D\uFF1A\u5DF2\u6574\u7406 ${done}/${size}`,
+        cls: "omni-section-title"
+      });
+      const bar = container.createEl("div", { cls: "omni-progress" });
+      bar.createEl("div", {
+        cls: "omni-progress-fill",
+        attr: { style: `width:${size > 0 ? Math.round(done / size * 100) : 0}%;` }
+      });
+      const seriesBtns = container.createEl("div", { cls: "omni-detail-actions" });
+      seriesBtns.createEl("button", { text: "\u79FB\u51FA\u7CFB\u5217", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+        void this.source.onGroupLeave(item.id).then(() => this.renderContent()).catch((e) => new import_obsidian8.Notice(`\u79FB\u51FA\u5931\u8D25\uFF1A${e.message}`));
+      });
+      seriesBtns.createEl("button", { text: "\u6574\u4E2A\u7CFB\u5217\u5E76\u5165\u2026", cls: "omni-btn omni-btn-sm omni-btn-ghost" }).addEventListener("click", () => {
+        this.promptText("\u5E76\u5165\u5176\u4ED6\u7CFB\u5217/\u5206\u7EC4", "\u8F93\u5165\u76EE\u6807\u7CFB\u5217\u540D", async (target) => {
+          await this.source.onGroupMerge(item.groupName, target);
+        });
+      });
+    }
+    if ((item.related ?? []).length > 0) {
+      container.createEl("div", { text: "\u76F8\u5173\u6536\u85CF", cls: "omni-section-title" });
+      const relatedBox = container.createEl("div", { cls: "omni-detail-related" });
+      for (const r of item.related ?? []) {
+        const row = relatedBox.createEl("div", { cls: "omni-related-row" });
+        row.createEl("span", {
+          text: PLATFORM_LABELS[r.platform] ?? r.platform,
+          cls: "omni-badge omni-badge-platform",
+          attr: { style: `--omni-platform:${platformMeta(r.platform).color};` }
+        });
+        row.createEl("span", { text: r.title || r.id, cls: "omni-related-title" });
+        if (r.reason) row.createEl("span", { text: r.reason, cls: "omni-badge omni-badge-reason" });
+        row.addEventListener("click", () => {
+          this.currentId = r.id;
+          void this.renderContent();
+        });
+      }
+    }
+    const actions = container.createEl("div", { cls: "omni-detail-actions" });
+    const orgBtn = actions.createEl("button", { text: `\u6574\u7406\uFF1A${item.organizeStatus}\uFF08\u70B9\u51FB\u63A8\u8FDB\uFF09`, cls: "omni-act" });
+    orgBtn.addEventListener("click", () => {
+      const next = item.organizeStatus === "unorganized" ? "viewed" : item.organizeStatus === "viewed" ? "organized" : "archived";
+      void this.source.onOrganize(item.id, next).then(() => {
+        item.organizeStatus = next;
+        orgBtn.setText(`\u6574\u7406\uFF1A${next}\uFF08\u70B9\u51FB\u63A8\u8FDB\uFF09`);
+      });
+    });
+    const priBtn = actions.createEl("button", { text: `\u4F18\u5148\u7EA7\uFF1A${item.priority}`, cls: "omni-act omni-act-priority" });
+    priBtn.addEventListener("click", () => {
+      const order = ["normal", "important", "project", "knowledge"];
+      const next = order[(order.indexOf(item.priority) + 1) % order.length];
+      void this.source.onPriority(item.id, next).then(() => {
+        item.priority = next;
+        priBtn.setText(`\u4F18\u5148\u7EA7\uFF1A${next}`);
+      });
+    });
+    actions.createEl("button", {
+      text: item.groupName ? "\u79FB\u5165\u5176\u4ED6\u7CFB\u5217\u2026" : "\u52A0\u5165\u7CFB\u5217\u2026",
+      cls: "omni-act"
+    }).addEventListener("click", () => {
+      this.promptText("\u52A0\u5165\u7CFB\u5217/\u5206\u7EC4", "\u8F93\u5165\u7CFB\u5217\u540D\uFF08\u4E0D\u5B58\u5728\u5219\u81EA\u52A8\u521B\u5EFA\uFF09", async (group) => {
+        await this.source.onGroupJoin(item.id, group);
+      });
+    });
+  }
+  promptText(title, placeholder, submit) {
+    const modal = new import_obsidian8.Modal(this.app);
+    modal.titleEl.setText(title);
+    const input = modal.contentEl.createEl("input", { type: "text", placeholder });
+    const done = () => {
+      if (input.value.trim()) {
+        void submit(input.value.trim()).then(() => {
+          modal.close();
+          new import_obsidian8.Notice("\u5DF2\u4FDD\u5B58");
+        }).catch((err) => new import_obsidian8.Notice(`\u4FDD\u5B58\u5931\u8D25\uFF1A${err.message}`));
+      }
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") done();
+    });
+    modal.contentEl.createEl("button", { text: "\u786E\u5B9A", cls: "omni-btn omni-btn-primary" }).addEventListener("click", done);
+    modal.open();
+  }
+  async onClose() {
+  }
+};
+
 // src/ui/manual-ai-batch.ts
 var import_obsidian9 = require("obsidian");
-function buildManualBatchTemplate(items) {
-  const list = items.map(
-    (item, i) => `${i}. \u6807\u9898\uFF1A${item.title}
-   \u5E73\u53F0\uFF1A${item.platform}
-   \u94FE\u63A5\uFF1A${item.url}
-` + (item.description ? `   \u7B80\u4ECB\uFF1A${item.description.slice(0, 300)}
-` : "")
-  ).join("\n");
-  return [
-    "\u4F60\u662F\u6536\u85CF\u6574\u7406\u52A9\u624B\u3002\u4E0B\u9762\u6709 " + items.length + " \u6761\u6536\u85CF\uFF0C\u8BF7\u9010\u6761\u8F93\u51FA JSON \u6570\u7EC4\uFF0C\u5143\u7D20\u7ED3\u6784\uFF1A",
-    '[{"index":0,"suggestions":[{"type":"suggested_tag|suggested_topic|suggested_summary|suggested_group","payload":"...","confidence":0-1}]}]',
-    "index \u5FC5\u987B\u4E0E\u6536\u85CF\u7F16\u53F7\u4E00\u4E00\u5BF9\u5E94\uFF080 \u5F00\u59CB\uFF09\uFF1Bsuggested_tag \u7684 payload \u4E3A\u5B57\u7B26\u4E32\u6570\u7EC4 JSON\uFF1B",
-    "suggested_topic \u4E3A\u5355\u4E2A\u4E3B\u9898\u5B57\u7B26\u4E32\uFF1Bsuggested_summary \u4E3A 1-2 \u53E5\u6458\u8981\uFF1B",
-    "suggested_group \u4E3A\u6536\u85CF\u5206\u7EC4\u540D\u3002\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981\u989D\u5916\u89E3\u91CA\u3002",
-    "",
-    "--- \u6536\u85CF\u5217\u8868 ---",
-    list
-  ].join("\n");
-}
-function openManualAIBatchModal(app, items, source) {
+function openManualAIBatchModal(app, items, source, vocabulary) {
   const modal = new import_obsidian9.Modal(app);
   modal.titleEl.setText(`Manual AI \u6279\u91CF\uFF08${items.length} \u6761\uFF09`);
   modal.contentEl.createEl("h4", { text: "1) \u590D\u5236\u6A21\u677F\u5230\u4EFB\u610F AI \u5DE5\u5177\uFF08\u4E00\u6B21\u5904\u7406\u5168\u90E8\u6536\u85CF\uFF09" });
   const tpl = modal.contentEl.createEl("textarea", {
     attr: { rows: "16", style: "width:100%;" }
   });
-  tpl.value = buildManualBatchTemplate(items);
+  tpl.value = buildManualBatchTemplate(items, vocabulary);
   modal.contentEl.createEl("button", { text: "\u590D\u5236\u6A21\u677F", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
     tpl.select();
     document.execCommand("copy");
@@ -6230,6 +6649,7 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         onTopic: (id, topic) => this.engine.addTopic(id, topic).then(() => void 0),
         onPriority: (id, priority) => this.engine.setPriority(id, priority).then(() => void 0),
         onConvert: (id, to) => this.engine.convertCollection(id, to).then(() => void 0),
+        onRating: (id, rating) => this.engine.setRating(id, rating).then(() => void 0),
         ensureCover: (url) => this.ensureCover(url),
         openLocalFile: (filePath) => {
           const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -6246,12 +6666,24 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         onPriority: (id, p) => this.engine.setPriority(id, p).then(() => void 0),
         onTag: (id, t) => this.engine.addTag(id, t).then(() => void 0),
         onTopic: (id, t) => this.engine.addTopic(id, t).then(() => void 0),
+        onRating: (id, rating) => this.engine.setRating(id, rating).then(() => void 0),
+        onStarComment: (id, commentId, starred) => this.engine.starComment(id, commentId, starred).then(() => void 0),
+        materializeRating: (dto, rating) => this.writeUserZoneSection(dto, "\u8BC4\u5206", renderRating(rating)),
+        materializeStarredComments: (dto) => this.writeUserZoneSection(
+          dto,
+          "\u7CBE\u9009\u8BC4\u8BBA",
+          (dto.comments ?? []).filter((c) => c.starred).map((c) => `- **${c.author}**\uFF1A${c.content}`).join("\n")
+        ),
+        onGroupJoin: (id, group) => this.engine.joinGroup(id, group).then(() => void 0),
+        onGroupLeave: (id) => this.engine.leaveGroup(id).then(() => void 0),
+        onGroupMerge: (source2, target) => this.engine.mergeGroup(source2, target).then(() => void 0),
         openLocalFile: (filePath) => {
           const file = this.app.vault.getAbstractFileByPath(filePath);
           if (file) void this.app.workspace.getLeaf(false).openFile(file);
         },
         ensureCover: (url) => this.ensureCover(url),
-        submitManualAI: (id, reply) => this.engine.submitManualAI(id, reply).then(() => void 0)
+        submitManualAI: (id, reply) => this.engine.submitManualAI(id, reply).then(() => void 0),
+        getVocabulary: () => this.tagVocabulary()
       };
       return new OmniCollectionDetailView(leaf, source);
     });
@@ -6270,9 +6702,23 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         listTags: () => this.engine.listTags(),
         addAlias: (tag, alias) => this.engine.addTagAlias(tag, alias).then(() => void 0),
         mergeTags: (sourceTag, target) => this.engine.mergeTags(sourceTag, target).then(() => void 0),
-        renameTag: (tag, next) => this.engine.renameTag(tag, next).then(() => void 0),
+        renameTag: async (tag, next) => {
+          await this.engine.renameTag(tag, next);
+          await this.renameHubFile("Tags", tag, next);
+        },
         listTopics: () => this.engine.listTopics(),
-        renameTopic: (id, name) => this.engine.renameTopic(id, name).then(() => void 0),
+        mergeTopic: async (sourceId, targetName) => {
+          const target = (await this.engine.listTopics().catch(() => [])).find((t) => t.name === targetName);
+          if (!target) throw new Error(`\u76EE\u6807 Topic\u300C${targetName}\u300D\u4E0D\u5B58\u5728`);
+          if (target.id === sourceId) throw new Error("\u4E0D\u80FD\u5408\u5E76\u5230\u81EA\u8EAB");
+          await this.engine.mergeTopic(sourceId, target.id);
+        },
+        renameTopic: async (id, name) => {
+          const topics = await this.engine.listTopics().catch(() => []);
+          const old = topics.find((t) => t.id === id)?.name ?? "";
+          await this.engine.renameTopic(id, name);
+          if (old && old !== name) await this.renameHubFile("Topics", old, name);
+        },
         listCollections: () => this.engine.listCollections(),
         openDetail: (id) => this.openCollectionDetail(id),
         refreshMarkdown: () => this.generateCollectionMarkdown()
@@ -6340,6 +6786,13 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
       name: "\u6253\u5F00\u6536\u85CF\u5217\u8868",
       callback: () => {
         void this.openCollectionList();
+      }
+    });
+    this.addCommand({
+      id: "daily-review",
+      name: "\u4ECA\u65E5\u56DE\u987E\uFF08\u91CD\u73B0\u4E00\u6761\u6700\u65E7\u7684\u672A\u6574\u7406\u6536\u85CF\uFF09",
+      callback: () => {
+        void this.controller.dailyReview();
       }
     });
     this.addCommand({
@@ -6487,7 +6940,17 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         const candidates = res.payload?.candidates ?? [];
         new import_obsidian10.Notice(`\u5206\u7EC4\u8BC6\u522B\u5B8C\u6210\uFF1A\u53D1\u73B0 ${candidates.length} \u4E2A\u5019\u9009\uFF08\u8BF7\u5230 AI \u5EFA\u8BAE\u5BA1\u6838\u786E\u8BA4\uFF09`);
       },
-      scanLocalFiles: () => this.scanLocalFiles()
+      scanLocalFiles: () => this.scanLocalFiles(),
+      dailyReview: async () => {
+        const items = await this.engine.listCollections().catch(() => []);
+        const pick = pickDailyReview(items);
+        if (!pick) {
+          new import_obsidian10.Notice("\u4ECA\u65E5\u56DE\u987E\uFF1A\u6682\u65E0\u53EF\u56DE\u987E\u7684\u6536\u85CF\uFF08\u5148\u53BB\u540C\u6B65\u5427\uFF09");
+          return;
+        }
+        new import_obsidian10.Notice(`\u4ECA\u65E5\u56DE\u987E\uFF1A${pick.title || pick.platformItemId}`);
+        await this.openCollectionDetail(pick.id);
+      }
     };
   }
   updateEngineNodeBin() {
@@ -6638,11 +7101,13 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         }).filter(Boolean);
         const hubPath = `${topicDir}/${sanitizeFilename(topic.name)}.md`;
         try {
-          const content = builder.buildTopicHub(topic.name, links);
+          const fresh = builder.buildTopicHub(topic.name, links);
           if (await vault.adapter.exists(hubPath)) {
-            await vault.adapter.write(hubPath, content);
+            const existing = await vault.adapter.read(hubPath);
+            const next = builder.validateMarkers(existing) ? builder.replaceHubSystemZone(existing, topic.name, links, "topics") ?? fresh : fresh;
+            await vault.adapter.write(hubPath, next);
           } else {
-            await vault.create(hubPath, content);
+            await vault.create(hubPath, fresh);
           }
         } catch {
         }
@@ -6659,17 +7124,47 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         const links = collections.filter((c) => (c.tags ?? []).includes(tag.name)).map((c) => `Omni Collector/${c.platform}/${sanitizeFilename(c.title || c.platformItemId)}`);
         const hubPath = `${tagDir}/${sanitizeFilename(tag.name)}.md`;
         try {
-          const content = builder.buildTagHub(tag.name, links);
+          const fresh = builder.buildTagHub(tag.name, links);
           if (await vault.adapter.exists(hubPath)) {
-            await vault.adapter.write(hubPath, content);
+            const existing = await vault.adapter.read(hubPath);
+            const next = builder.validateMarkers(existing) ? builder.replaceHubSystemZone(existing, tag.name, links, "tags") ?? fresh : fresh;
+            await vault.adapter.write(hubPath, next);
           } else {
-            await vault.create(hubPath, content);
+            await vault.create(hubPath, fresh);
           }
         } catch {
         }
       }
     }
     new import_obsidian10.Notice(`Omni Collector: \u5DF2\u751F\u6210/\u66F4\u65B0 ${count} \u4E2A Markdown`);
+  }
+  /** 计算收藏 Markdown 路径（与 generateCollectionMarkdown 命名一致）。 */
+  collectionMarkdownPath(dto) {
+    const safeTitle = (dto.title || dto.platformItemId).replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
+    return `Omni Collector/${dto.platform}/${safeTitle}.md`;
+  }
+  /**
+   * 把用户在 UI 的显式操作物化进 Markdown 用户区（评分/精选评论，ADR-006：用户区为权威）。
+   * 文件尚未生成时跳过——之后 generateCollectionMarkdown 按 DTO 建档时会带上最新值。
+   */
+  async writeUserZoneSection(dto, headerKeyword, content) {
+    const filePath = this.collectionMarkdownPath(dto);
+    const vault = this.app.vault;
+    try {
+      if (!await vault.adapter.exists(filePath)) return;
+      const existing = await vault.adapter.read(filePath);
+      const next = new MarkdownBuilder().replaceUserZoneSection(existing, headerKeyword, content);
+      if (next !== null && next !== existing) await vault.adapter.write(filePath, next);
+    } catch {
+    }
+  }
+  /** 聚合页重命名跟随：vault.rename 自动更新全库 wikilink（图谱边不断），H1 由下次生成镜像。 */
+  async renameHubFile(dir, oldName, newName) {
+    const oldPath = `Omni Collector/${dir}/${sanitizeFilename(oldName)}.md`;
+    const newPath = `Omni Collector/${dir}/${sanitizeFilename(newName)}.md`;
+    if (oldPath === newPath) return;
+    const file = this.app.vault.getAbstractFileByPath(oldPath);
+    if (file) await this.app.vault.rename(file, newPath);
   }
   async openCollectionList(platform) {
     const { workspace } = this.app;
@@ -6711,9 +7206,23 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
     }
     if (leaf) workspace.setActiveLeaf(leaf);
   }
+  /** 受控词表（借鉴 Cubox）：Tag/Topic/分组 TopN，供 Manual AI 模板对齐用户已有命名。 */
+  async tagVocabulary() {
+    const [tags, topics, groups] = await Promise.all([
+      this.engine.listTags().catch(() => []),
+      this.engine.listTopics().catch(() => []),
+      this.engine.listGroups().catch(() => [])
+    ]);
+    return {
+      tags: [...tags].sort((a, b) => b.count - a.count).slice(0, 30).map((t) => t.name),
+      topics: topics.filter((t) => t.status === "accepted" || (t.collection_ids ?? []).length > 0).slice(0, 30).map((t) => t.name),
+      groups: groups.slice(0, 30).map((g) => g.name)
+    };
+  }
   /** Manual AI 全局入口：先选收藏，再打开模板（PRD 19.3）。 */
   async openManualAIPicker() {
     const collections = await this.engine.listCollections().catch(() => []);
+    const vocabulary = await this.tagVocabulary().catch(() => void 0);
     const modal = new import_obsidian10.Modal(this.app);
     modal.titleEl.setText("\u9009\u62E9\u6536\u85CF\uFF08Manual AI \u6A21\u677F\uFF09");
     const search = modal.contentEl.createEl("input", {
@@ -6733,9 +7242,12 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         row.createEl("span", { text: c.title || c.id, cls: "omni-title" });
         row.addEventListener("click", () => {
           modal.close();
-          openManualAIModal(this.app, c, {
-            submit: (id, reply) => this.engine.submitManualAI(id, reply).then(() => void 0)
-          });
+          openManualAIModal(
+            this.app,
+            c,
+            { submit: (id, reply) => this.engine.submitManualAI(id, reply).then(() => void 0) },
+            vocabulary
+          );
         });
       }
       if (filtered.length === 0) {
@@ -6749,6 +7261,7 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
   /** Manual AI 批量入口：按平台/时间段打包 N 条收藏，一次交给网页 AI。 */
   async openManualAIBatchPicker() {
     const collections = await this.engine.listCollections().catch(() => []);
+    const vocabulary = await this.tagVocabulary().catch(() => void 0);
     const modal = new import_obsidian10.Modal(this.app);
     modal.titleEl.setText("Manual AI \u6279\u91CF\u6253\u5305");
     const filters = modal.contentEl.createEl("div", { cls: "omni-batch-filter" });
@@ -6799,9 +7312,14 @@ var OmniCollectorPlugin = class extends import_obsidian10.Plugin {
         return;
       }
       modal.close();
-      openManualAIBatchModal(this.app, items, {
-        submit: (ids, reply) => this.engine.submitManualAIBatch(ids, reply).then((res) => Number(res.payload?.saved ?? 0))
-      });
+      openManualAIBatchModal(
+        this.app,
+        items,
+        {
+          submit: (ids, reply) => this.engine.submitManualAIBatch(ids, reply).then((res) => Number(res.payload?.saved ?? 0))
+        },
+        vocabulary
+      );
     });
     refresh();
     modal.open();

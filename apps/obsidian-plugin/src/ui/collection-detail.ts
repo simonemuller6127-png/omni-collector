@@ -1,6 +1,8 @@
 import { ItemView, Modal, Notice, WorkspaceLeaf } from "obsidian";
 import type { CollectionDTO } from "@omni/shared-core";
 import { openManualAIModal } from "./manual-ai.js";
+import { renderRating } from "../markdown/markdown-builder.js";
+import { platformMeta } from "./helpers.js";
 
 export const VIEW_TYPE_OMNI_DETAIL = "omni-collector-detail";
 
@@ -11,9 +13,23 @@ export interface DetailDataSource {
   onPriority(collectionId: string, priority: CollectionDTO["priority"]): Promise<void>;
   onTag(collectionId: string, tag: string): Promise<void>;
   onTopic(collectionId: string, topic: string): Promise<void>;
+  /** 手动评分 1~5（0=清除），仅写 SQLite 同步副本。 */
+  onRating(collectionId: string, rating: number): Promise<void>;
+  /** 精选评论切换（PRD 7.3），仅写 SQLite 同步副本。 */
+  onStarComment(collectionId: string, commentId: string, starred: boolean): Promise<void>;
+  /** 把最新评分物化进 Markdown 用户区（ADR-006）。 */
+  materializeRating(dto: CollectionDTO, rating: number): Promise<void>;
+  /** 把最新精选评论列表物化进 Markdown 用户区。 */
+  materializeStarredComments(dto: CollectionDTO): Promise<void>;
+  /** 系列/分组手动操作（PRD 24）：加入（不存在则创建）/ 移出 / 整组并入。 */
+  onGroupJoin(collectionId: string, group: string): Promise<void>;
+  onGroupLeave(collectionId: string): Promise<void>;
+  onGroupMerge(sourceGroup: string, targetGroup: string): Promise<void>;
   openLocalFile(filePath: string): void;
   ensureCover(url: string): Promise<string | null>;
   submitManualAI(collectionId: string, reply: string): Promise<void>;
+  /** 受控词表（Manual AI 模板对齐用户命名，借鉴 Cubox）。 */
+  getVocabulary(): Promise<{ tags: string[]; topics: string[]; groups: string[] }>;
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -55,6 +71,11 @@ export class OmniCollectionDetailView extends ItemView {
     return "Omni Collector 内容预览";
   }
 
+  /** 视图标识图标：内容预览用「翻开的书」，与其他视图区分。 */
+  getIcon(): string {
+    return "book-open";
+  }
+
   getState(): Record<string, unknown> {
     return { collectionId: this.currentId };
   }
@@ -70,7 +91,7 @@ export class OmniCollectionDetailView extends ItemView {
   }
 
   private async renderContent(): Promise<void> {
-    const container = this.containerEl.children[1];
+    const container = this.containerEl.children[1] as HTMLElement;
     container.empty();
     container.addClass("omni-detail");
     if (!this.currentId) {
@@ -82,6 +103,9 @@ export class OmniCollectionDetailView extends ItemView {
       container.createEl("div", { text: "收藏不存在", cls: "omni-empty" });
       return;
     }
+    // 平台色彩识别（外观借鉴 Eagle/Karakeep）：徽标与标题条共用品牌色
+    const pm = platformMeta(item.platform);
+    container.style.setProperty("--omni-platform", pm.color);
 
     // 封面（本地缓存，加速显示）
     if (item.coverUrl) {
@@ -96,7 +120,7 @@ export class OmniCollectionDetailView extends ItemView {
     if (item.contentStatus === "deleted") {
       meta.createEl("span", { text: "失效", cls: "omni-badge omni-badge-deleted" });
     }
-    meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform" });
+    meta.createEl("span", { text: PLATFORM_LABELS[item.platform] ?? item.platform, cls: "omni-badge omni-badge-platform", attr: { style: `--omni-platform:${pm.color};` } });
     meta.createEl("span", { text: item.author ?? "未知作者", cls: "omni-badge" });
     meta.createEl("span", { text: item.contentType === "video" ? "视频" : item.contentType, cls: "omni-badge" });
     meta.createEl("span", { text: new Date(item.collectedAt).toLocaleDateString("zh-CN"), cls: "omni-meta-text" });
@@ -169,19 +193,81 @@ export class OmniCollectionDetailView extends ItemView {
     const topicBtn = chips.createEl("button", { text: "＋Topic", cls: "omni-chip" });
     topicBtn.addEventListener("click", () => this.promptText("归入 Topic", "输入 Topic 名", (v) => this.source.onTopic(item.id, v)));
     const manualBtn = chips.createEl("button", { text: "Manual AI", cls: "omni-chip" });
-    manualBtn.addEventListener("click", () =>
-      openManualAIModal(this.app, item, { submit: (id, reply) => this.source.submitManualAI(id, reply) }),
-    );
+    manualBtn.addEventListener("click", () => {
+      void this.source
+        .getVocabulary()
+        .catch(() => undefined)
+        .then((vocabulary) =>
+          openManualAIModal(
+            this.app,
+            item,
+            { submit: (id, reply) => this.source.submitManualAI(id, reply) },
+            vocabulary,
+          ),
+        );
+    });
 
-    // 已同步评论
+    // 已同步评论（PRD 7.3：可手动精选，精选写入 Markdown 用户区）
     if ((item.comments ?? []).length > 0) {
       container.createEl("div", { text: "评论", cls: "omni-section-title" });
       const comments = container.createEl("div", { cls: "omni-detail-comments" });
       for (const c of item.comments ?? []) {
-        const row = comments.createEl("div", { cls: "omni-comment" });
+        const row = comments.createEl("div", { cls: `omni-comment${c.starred ? " omni-comment-starred" : ""}` });
         row.createEl("span", { text: c.author, cls: "omni-comment-author" });
         row.createEl("span", { text: c.content, cls: "omni-comment-content" });
+        if (c.id) {
+          const starBtn = row.createEl("button", {
+            text: c.starred ? "★" : "☆",
+            cls: `omni-star${c.starred ? " omni-star-on" : ""}`,
+            attr: { title: c.starred ? "取消精选" : "精选此评论" },
+          });
+          starBtn.addEventListener("click", () => {
+            const next = !c.starred;
+            void this.source
+              .onStarComment(item.id, c.id as string, next)
+              .then(() => {
+                c.starred = next;
+                row.toggleClass("omni-comment-starred", next);
+                starBtn.setText(next ? "★" : "☆");
+                starBtn.toggleClass("omni-star-on", next);
+                return this.source.materializeStarredComments(item);
+              })
+              .catch((e) => new Notice(`精选评论失败：${(e as Error).message}`));
+          });
+        }
       }
+    }
+
+    // 手动评分（PRD 29.2：1~5 星，用户区权威 + SQLite 同步副本）
+    const ratingBox = container.createEl("div", { cls: "omni-detail-rating" });
+    ratingBox.createEl("span", { text: "我的评分", cls: "omni-section-title" });
+    const starsRow = ratingBox.createEl("div", { cls: "omni-rating-stars" });
+    let current = item.rating ?? 0;
+    const ratingLabel = starsRow.createEl("span", { text: current > 0 ? renderRating(current) : "未评分", cls: "omni-rating-label" });
+    const starBtns: HTMLButtonElement[] = [];
+    for (let i = 1; i <= 5; i += 1) {
+      const star = starsRow.createEl("button", {
+        text: i <= current ? "★" : "☆",
+        cls: `omni-star${i <= current ? " omni-star-on" : ""}`,
+        attr: { title: `${i} 星` },
+      });
+      starBtns.push(star);
+      star.addEventListener("click", () => {
+        const next = i === current ? 0 : i; // 再点当前最高星 = 清除
+        void this.source
+          .onRating(item.id, next)
+          .then(() => {
+            current = next;
+            item.rating = next || null;
+            ratingLabel.setText(next > 0 ? renderRating(next) : "未评分");
+            for (let j = 1; j <= 5; j += 1) {
+              starBtns[j - 1].setText(j <= next ? "★" : "☆");
+              starBtns[j - 1].toggleClass("omni-star-on", j <= next);
+            }
+            return this.source.materializeRating(item, next);
+          })
+          .catch((e) => new Notice(`评分失败：${(e as Error).message}`));
+      });
     }
 
     // 本地关联文件
@@ -199,14 +285,46 @@ export class OmniCollectionDetailView extends ItemView {
       });
     }
 
+    // 系列 / 分组进度（PRD 24）：自动识别的系列与手动操作入口 + 进度条
+    if (item.groupName) {
+      const size = item.groupSize ?? (item.related ?? []).length + 1;
+      const done = item.groupOrganized ?? 0;
+      container.createEl("div", {
+        text: `系列「${item.groupName}」：已整理 ${done}/${size}`,
+        cls: "omni-section-title",
+      });
+      const bar = container.createEl("div", { cls: "omni-progress" });
+      bar.createEl("div", {
+        cls: "omni-progress-fill",
+        attr: { style: `width:${size > 0 ? Math.round((done / size) * 100) : 0}%;` },
+      });
+      const seriesBtns = container.createEl("div", { cls: "omni-detail-actions" });
+      seriesBtns.createEl("button", { text: "移出系列", cls: "omni-btn omni-btn-sm" }).addEventListener("click", () => {
+        void this.source
+          .onGroupLeave(item.id)
+          .then(() => this.renderContent())
+          .catch((e) => new Notice(`移出失败：${(e as Error).message}`));
+      });
+      seriesBtns.createEl("button", { text: "整个系列并入…", cls: "omni-btn omni-btn-sm omni-btn-ghost" }).addEventListener("click", () => {
+        this.promptText("并入其他系列/分组", "输入目标系列名", async (target) => {
+          await this.source.onGroupMerge(item.groupName as string, target);
+        });
+      });
+    }
+
     // Related Collections（同分组或同实体跨平台）
     if ((item.related ?? []).length > 0) {
       container.createEl("div", { text: "相关收藏", cls: "omni-section-title" });
       const relatedBox = container.createEl("div", { cls: "omni-detail-related" });
       for (const r of item.related ?? []) {
         const row = relatedBox.createEl("div", { cls: "omni-related-row" });
-        row.createEl("span", { text: PLATFORM_LABELS[r.platform] ?? r.platform, cls: "omni-badge omni-badge-platform" });
+        row.createEl("span", {
+          text: PLATFORM_LABELS[r.platform] ?? r.platform,
+          cls: "omni-badge omni-badge-platform",
+          attr: { style: `--omni-platform:${platformMeta(r.platform).color};` },
+        });
         row.createEl("span", { text: r.title || r.id, cls: "omni-related-title" });
+        if (r.reason) row.createEl("span", { text: r.reason, cls: "omni-badge omni-badge-reason" });
         row.addEventListener("click", () => {
           this.currentId = r.id;
           void this.renderContent();
@@ -231,6 +349,14 @@ export class OmniCollectionDetailView extends ItemView {
       void this.source.onPriority(item.id, next).then(() => {
         item.priority = next;
         priBtn.setText(`优先级：${next}`);
+      });
+    });
+    actions.createEl("button", {
+      text: item.groupName ? "移入其他系列…" : "加入系列…",
+      cls: "omni-act",
+    }).addEventListener("click", () => {
+      this.promptText("加入系列/分组", "输入系列名（不存在则自动创建）", async (group) => {
+        await this.source.onGroupJoin(item.id, group);
       });
     });
   }

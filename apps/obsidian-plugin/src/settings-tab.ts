@@ -283,6 +283,23 @@ export class OmniSettingTab extends PluginSettingTab {
           }
         }),
       );
+      statusRow.addButton((btn) =>
+        btn.setButtonText("登录窗口").onClick(async () => {
+          new Notice(`${label} 登录窗口打开中，请在窗口里手动登录（最长等 5 分钟，成功后自动加密保存，无需粘贴）`);
+          try {
+            const res = await this.plugin.engine.openLoginWindow(key);
+            if (res.payload?.logged_in) {
+              new Notice(`${label} 登录成功，Cookie 已加密保存到本地（data/cookies）`);
+            } else {
+              new Notice(`${label} 登录未完成：${String(res.payload?.reason ?? "窗口已关闭")}`);
+            }
+          } catch (err) {
+            new Notice(`登录窗口失败：${(err as Error).message}`);
+          } finally {
+            await refreshStatus();
+          }
+        }),
+      );
       void refreshStatus();
     }
 

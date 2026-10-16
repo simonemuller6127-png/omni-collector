@@ -200,4 +200,82 @@ describe("SyncPipeline", () => {
     m.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
+
+  it("reports near-duplicate tags once tag count reaches the rule threshold", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-sp-dupe-"));
+    const migDir = path.join(dataDir, "migrations");
+    fs.cpSync(REAL_MIGRATIONS, migDir, { recursive: true });
+    const m = new MigrationManager(path.join(dataDir, "OmniCollector.db"), migDir, path.join(dataDir, "backup"));
+    m.migrate();
+    const db = m.getDb();
+    const tags = new TagRepository(db);
+    const rules = new RuleCenter(db);
+    // 构造两个近重复内容标签（形式标签只写 content_type，不进 tags 表，故无需过滤）
+    tags.ensureTag("生活美");
+    tags.ensureTag("生活美学");
+    const adapter = new FakeAdapter();
+    adapter.fetchCatalog = async () => [
+      {
+        platformItemId: "BV-dupe-1",
+        url: "https://example.com/video/BV-dupe-1",
+        title: "桌搭",
+        author: "UP",
+        collectedAt: "2026-03-01T00:00:00Z",
+        saveType: "favorited" as const,
+      },
+    ];
+    const makePipeline = (): SyncPipeline =>
+      new SyncPipeline({
+        getAdapter: () => adapter,
+        collections: new CollectionRepository(db),
+        comments: new CommentRepository(db),
+        accounts: new AccountRepository(db),
+        rules,
+        logs: new SyncLogRepository(db),
+        ai: new AIRepository(db),
+        tags,
+      });
+
+    // 阈值调到足够小 → 检测生效
+    rules.set("ai_duplicate_tag_min_count", "2");
+    const withDupes = await makePipeline().run("fake", "catalog");
+    expect(withDupes.status).toBe("success");
+    expect(withDupes.duplicateTags).toBeDefined();
+    const pairs = (withDupes.duplicateTags ?? []).map((p) => `${p.a}|${p.b}`);
+    expect(pairs).toContain("生活美|生活美学");
+
+    // 阈值调到很大 → 不跑检测（避免小库白跑 O(n^2)），字段为 undefined
+    rules.set("ai_duplicate_tag_min_count", "9999");
+    const noDupes = await makePipeline().run("fake", "catalog");
+    expect(noDupes.duplicateTags).toBeUndefined();
+
+    m.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("omits duplicateTags when tags dependency is absent (no throw)", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-sp-notags-"));
+    const migDir = path.join(dataDir, "migrations");
+    fs.cpSync(REAL_MIGRATIONS, migDir, { recursive: true });
+    const m = new MigrationManager(path.join(dataDir, "OmniCollector.db"), migDir, path.join(dataDir, "backup"));
+    m.migrate();
+    const db = m.getDb();
+    const rules = new RuleCenter(db);
+    rules.set("ai_duplicate_tag_min_count", "1");
+    const p = new SyncPipeline({
+      getAdapter: () => new FakeAdapter(),
+      collections: new CollectionRepository(db),
+      comments: new CommentRepository(db),
+      accounts: new AccountRepository(db),
+      rules,
+      logs: new SyncLogRepository(db),
+      ai: new AIRepository(db),
+      // 未传 tags
+    });
+    const report = await p.run("fake", "catalog", undefined, 1);
+    expect(report.status).toBe("success");
+    expect(report.duplicateTags).toBeUndefined();
+    m.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
 });

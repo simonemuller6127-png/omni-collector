@@ -115,6 +115,11 @@ export class TopicRepository {
     });
   }
 
+  /** 删除 Topic（合并后清理源主题用）。 */
+  deleteTopic(topicId: string): void {
+    this.db.prepare("DELETE FROM topics WHERE id = ?").run(topicId);
+  }
+
   renameTopic(topicId: string, name: string): void {
     const trimmed = name.trim();
     if (!trimmed) return;

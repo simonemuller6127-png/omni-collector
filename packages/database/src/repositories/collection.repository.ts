@@ -24,6 +24,10 @@ export class CollectionRepository extends BaseRepository<CollectionRow> {
       return this.update(existing.id, data);
     }
     const stamp = new Date().toISOString();
+    // 显式传入的 undefined 不得覆盖默认值（否则 SQLite 绑定失败/丢失默认时间戳）
+    const defined = Object.fromEntries(
+      Object.entries(data).filter(([, v]) => v !== undefined),
+    ) as Partial<CollectionRow>;
     const row: CollectionRow = {
       id: randomUUID(),
       platform,
@@ -41,7 +45,7 @@ export class CollectionRepository extends BaseRepository<CollectionRow> {
       collected_at: data.collected_at ?? stamp,
       created_at: stamp,
       updated_at: stamp,
-      ...data,
+      ...defined,
     };
     const bind = {
       id: row.id,

@@ -25,6 +25,8 @@ export interface OmniSettings {
   autoStartEngine: boolean;
   /** 收藏列表默认视图：list（纯文字）| card（缩略图卡片）。 */
   viewMode: "list" | "card";
+  /** 卡片视图排布：flat（等宽平铺网格）| waterfall（瀑布流错落列）。 */
+  cardLayout: "flat" | "waterfall";
   /** 本地文件扫描目录列表。 */
   localFolders: string[];
   /** 是否自动扫描本地目录。 */
@@ -70,6 +72,7 @@ export const DEFAULT_SETTINGS: OmniSettings = {
   initialSyncMode: "catalog",
   autoStartEngine: true,
   viewMode: "list",
+  cardLayout: "flat",
   localFolders: [],
   localAutoScan: false,
   localAutoScanMinutes: 30,

@@ -3,73 +3,27 @@ import type { CollectionDTO, TagDTO, TopicDTO } from "@omni/shared-core";
 
 export const VIEW_TYPE_OMNI_TAGS = "omni-collector-tags";
 
+export interface DuplicateTagPair {
+  a: string;
+  b: string;
+}
+
 export interface TagTopicSource {
   listTags(): Promise<TagDTO[]>;
+  /** 引擎侧疑似重复结果（SyncReport/STATUS_QUERY，权威实现 findNearDuplicateTags）。 */
+  listDuplicateTags(): Promise<DuplicateTagPair[]>;
   addAlias(tag: string, alias: string): Promise<void>;
   mergeTags(source: string, target: string): Promise<void>;
   renameTag(tag: string, next: string): Promise<void>;
   listTopics(): Promise<TopicDTO[]>;
   renameTopic(topicId: string, name: string): Promise<void>;
+  /** Topic 手动合并：source 成员并入目标名称对应的 Topic 后删除 source。 */
+  mergeTopic(sourceId: string, targetName: string): Promise<void>;
   listCollections(): Promise<CollectionDTO[]>;
   openDetail(collectionId: string): Promise<void>;
   refreshMarkdown(): Promise<void>;
 }
 
-interface DuplicatePair {
-  a: string;
-  b: string;
-  score: number;
-}
-
-function normTag(s: string): string {
-  return s.toLowerCase().replace(/[\s\u3000_\-—–.,，。:：;；'"“”‘’()（）]/g, "");
-}
-
-function levenshtein(a: string, b: string): number {
-  const dp: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [
-    i,
-    ...Array(b.length).fill(0),
-  ]);
-  for (let j = 0; j <= b.length; j += 1) dp[0][j] = j;
-  for (let i = 1; i <= a.length; i += 1) {
-    for (let j = 1; j <= b.length; j += 1) {
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
-    }
-  }
-  return dp[a.length][b.length];
-}
-
-/** 疑似重复 Tag（供人工合并；引擎保留权威实现）。 */
-function findDuplicates(tags: TagDTO[], limit = 30): DuplicatePair[] {
-  const keys = tags.map((t) => ({ raw: t.name, key: normTag(t.name) }));
-  const out: DuplicatePair[] = [];
-  for (let i = 0; i < keys.length; i += 1) {
-    for (let j = i + 1; j < keys.length; j += 1) {
-      const a = keys[i];
-      const b = keys[j];
-      if (!a.key || !b.key || a.key === b.key) continue;
-      const shorter = a.key.length <= b.key.length ? a : b;
-      const longer = shorter === a ? b : a;
-      let score = 0;
-      if (shorter.key.length >= 2 && (longer.key.startsWith(shorter.key) || longer.key.includes(shorter.key))) {
-        const diff = longer.key.length - shorter.key.length;
-        if (diff <= 3) score = shorter.key.length / longer.key.length;
-      }
-      if (score < 0.8) {
-        const maxLen = Math.max(a.key.length, b.key.length);
-        const sim = maxLen === 0 ? 0 : 1 - levenshtein(a.key, b.key) / maxLen;
-        if (sim >= 0.8) score = sim;
-      }
-      if (score > 0) out.push({ a: a.raw, b: b.raw, score });
-    }
-  }
-  out.sort((x, y) => y.score - x.score);
-  return out.slice(0, limit);
-}
 
 export class OmniTagTopicView extends ItemView {
   private tab = "tags";
@@ -90,7 +44,7 @@ export class OmniTagTopicView extends ItemView {
   }
 
   getIcon(): string {
-    return "tag";
+    return "tags";
   }
 
   async onOpen(): Promise<void> {
@@ -135,16 +89,21 @@ export class OmniTagTopicView extends ItemView {
   }
 
   private async renderTags(container: HTMLElement): Promise<void> {
-    const [tags, collections] = await Promise.all([
+    const [tags, collections, duplicates] = await Promise.all([
       this.source.listTags().catch(() => []),
       this.source.listCollections().catch(() => []),
+      // 权威结果来自引擎侧 findNearDuplicateTags（tag-utils.ts），避免同口径双跑 O(n^2)
+      this.source.listDuplicateTags().catch(() => []),
     ]);
     const total = collections.reduce((acc, c) => acc + (c.tags?.length ?? 0), 0);
     container.createEl("div", {
       text: `共 ${tags.length} 个 Tag · ${total} 条绑定`,
       cls: "omni-total",
     });
-    const duplicates = findDuplicates(tags);
+    container.createEl("div", {
+      text: "仅内容标签参与疑似重复检测；形式标签只写 content_type，不进入 Tag Atlas。",
+      cls: "omni-hint",
+    });
     if (duplicates.length > 0) {
       const box = container.createEl("div", { cls: "omni-dupe-box" });
       box.createEl("div", { text: "疑似重复（点击一键合并）", cls: "omni-section-title" });
@@ -208,6 +167,8 @@ export class OmniTagTopicView extends ItemView {
       const actions = row.createEl("div", { cls: "omni-row-actions" });
       this.action(actions, "重命名", () => this.prompt("重命名 Topic", "新名称", (v) =>
         this.source.renameTopic(t.id, v).then(() => this.source.refreshMarkdown())));
+      this.action(actions, "并入…", () => this.prompt(`把「${t.name}」并入`, "目标 Topic 名称", (v) =>
+        this.source.mergeTopic(t.id, v).then(() => this.source.refreshMarkdown())));
     }
     if (topics.length === 0) {
       list.createEl("div", { text: "暂无 Topic。AI 建议确认后会自动创建；也可在收藏详情手动归入 Topic。", cls: "omni-empty" });
