@@ -15,7 +15,7 @@
 > [!IMPORTANT]
 > 项目仍处于早期迭代阶段，**仅支持 Obsidian 桌面端，必须配置本地 Node.js 同步引擎**。只安装插件的三个文件并不代表完成安装。AI 为可选功能，默认关闭。
 >
-> 本文介绍已发布的 **0.9.0**。默认分支中的程序代码可能较旧；安装时请使用发行版附件和对应源码标签，不要直接下载仓库根目录的 `main.js`。
+> 本文介绍已发布的 **0.10.0**。默认分支中的程序代码可能较旧；安装时请使用发行版附件和对应源码标签，不要直接下载仓库根目录的 `main.js`。
 
 ## 它解决什么问题？
 
@@ -85,9 +85,9 @@ B站收藏了教程，小红书存了灵感，小黑盒收了攻略——它们�
 
 ### 2. 安装插件
 
-**通过 BRAT：** 安装 [BRAT](https://obsidian.md/plugins?id=obsidian42-brat)，添加仓库 `simonemuller6127-png/omni-collector`；若提示选择版本，请选 `0.9.0`。确认安装后的插件版本与引擎源码版本匹配。
+**通过 BRAT：** 安装 [BRAT](https://obsidian.md/plugins?id=obsidian42-brat)，添加仓库 `simonemuller6127-png/omni-collector`；若提示选择版本，请选 `0.10.0`。确认安装后的插件版本与引擎源码版本匹配。
 
-**手动安装：** 从 [0.9.0 发行版](https://github.com/simonemuller6127-png/omni-collector/releases/tag/0.9.0) 下载 `main.js`、`manifest.json`、`styles.css`，放入 `<笔记库>/.obsidian/plugins/omni-collector/`，再到 Obsidian 第三方插件设置中启用。
+**手动安装：** 从 [0.10.0 发行版](https://github.com/simonemuller6127-png/omni-collector/releases/tag/0.10.0) 下载 `main.js`、`manifest.json`、`styles.css`，放入 `<笔记库>/.obsidian/plugins/omni-collector/`，再到 Obsidian 第三方插件设置中启用。
 
 打开一次插件设置以初始化配置，然后在下方修改配置文件前关闭 Obsidian。发行版附件只包含插件，不包含引擎及其依赖。
 
@@ -96,8 +96,8 @@ B站收藏了教程，小红书存了灵感，小黑盒收了攻略——它们�
 在终端中执行。请使用新目录，不要在含有未保存改动的源码目录中切换版本。
 
 ```bash
-git clone --branch 0.9.0 --depth 1 https://github.com/simonemuller6127-png/omni-collector.git omni-collector-0.9.0
-cd omni-collector-0.9.0
+git clone --branch 0.10.0 --depth 1 https://github.com/simonemuller6127-png/omni-collector.git omni-collector-0.10.0
+cd omni-collector-0.10.0
 pnpm install --frozen-lockfile
 pnpm build
 pnpm --filter @omni/engine exec playwright install chromium
@@ -108,7 +108,7 @@ node apps/engine/scripts/deploy.mjs --data-dir "<数据目录绝对路径>"
 
 ### 4. 配置引擎路径
 
-0.9.0 的数据目录与引擎脚本路径存于配置文件，**设置界面中尚无这两个字段的输入控件**。关闭 Obsidian 后，备份 `<笔记库>/.obsidian/plugins/omni-collector/data.json`，再修改其中以下字段，保留其他配置不变：
+0.10.0 的数据目录与引擎脚本路径存于配置文件，**设置界面中尚无这两个字段的输入控件**。关闭 Obsidian 后，备份 `<笔记库>/.obsidian/plugins/omni-collector/data.json`，再修改其中以下字段，保留其他配置不变：
 
 ```json
 {
@@ -128,7 +128,7 @@ node apps/engine/scripts/deploy.mjs --data-dir "<数据目录绝对路径>"
 
 建议先启用一个平台，确认引擎连接成功、同步完成、收藏的来源链接可以打开，再开启定时同步。
 
-**YouTube 还需要额外配置：** 单独安装 yt-dlp，并确保引擎能够调用。0.9.0 会读取 `<dataDir>/ytdl_cookies.txt`，要求使用 yt-dlp 支持的 Netscape Cookie 文件格式；普通 Cookie 导入不会自动生成这个文件。它是敏感的明文凭据文件，需妥善保管。安装及 Cookie 文件要求参见 [yt-dlp 文档](https://github.com/yt-dlp/yt-dlp#readme)。
+**YouTube 还需要额外配置：** 单独安装 yt-dlp，并确保引擎能够调用。0.10.0 会读取 `<dataDir>/ytdl_cookies.txt`，要求使用 yt-dlp 支持的 Netscape Cookie 文件格式；普通 Cookie 导入不会自动生成这个文件。它是敏感的明文凭据文件，需妥善保管。安装及 Cookie 文件要求参见 [yt-dlp 文档](https://github.com/yt-dlp/yt-dlp#readme)。
 
 ## 隐私与使用边界
 
