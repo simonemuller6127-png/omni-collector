@@ -61,9 +61,12 @@ export class BilibiliAdapter extends BaseAdapter {
     }
   }
 
+  /** page 可传真实 Page 或 APIRequestContext（authenticate 传入 ctx.request）。 */
   async validateSession(page: Page): Promise<"valid" | "invalid"> {
     try {
-      const res = await page.request.get(NAV_URL, { headers: { "User-Agent": UA } });
+      // Page 有 .request；直接传 APIRequestContext 时就地使用，不能再用 .request 二次解引用
+      const req = (page as { request?: Page["request"] }).request ?? (page as unknown as Page["request"]);
+      const res = await req.get(NAV_URL, { headers: { "User-Agent": UA } });
       const json = (await res.json()) as {
         code: number;
         data?: { isLogin?: boolean; mid?: number };
@@ -75,7 +78,9 @@ export class BilibiliAdapter extends BaseAdapter {
   }
 
   async fetchCatalog(ctx: BrowserContext, cursor: SyncCursor): Promise<CollectionRaw[]> {
-    const folders = await this.getFavoriteFolders(ctx);
+    // 会话失效时 nav 拿不到 mid，绝不能静默返回空列表（会被当成"同步完成 0 条"）
+    const mid = await this.requireLogin(ctx);
+    const folders = await this.getFavoriteFolders(ctx, mid);
     if (folders.length === 0) return [];
     const mixinKey = await this.mixinKey(ctx);
     const rawItems: Array<{ bvid: string; title: string; cover: string; fav_time: number; upper?: { name?: string }; watchLater?: boolean }> = [];
@@ -86,26 +91,37 @@ export class BilibiliAdapter extends BaseAdapter {
           { media_id: String(folder.id), pn: String(pn), ps: '20', platform: 'web' },
           mixinKey,
         );
-        this.requests += 1;
-        try {
-          const res = await ctx.request.get(FAV_LIST_URL, { params, headers: { 'User-Agent': UA } });
-          const json = (await res.json()) as {
-            code: number;
-            data?: { medias?: BilibiliMedia[]; has_more?: boolean };
-          };
-          if (json.code !== 0) {
-            this.failures += 1;
-            break;
+        // 风控/瞬时网络错误重试一次；仍失败则整体报错，绝不静默丢弃剩余页
+        let json: {
+          code: number;
+          data?: { medias?: BilibiliMedia[]; has_more?: boolean };
+        } | null = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          this.requests += 1;
+          try {
+            const res = await ctx.request.get(FAV_LIST_URL, { params, headers: { 'User-Agent': UA } });
+            const parsed = (await res.json()) as {
+              code: number;
+              data?: { medias?: BilibiliMedia[]; has_more?: boolean };
+            };
+            if (parsed.code === 0) {
+              json = parsed;
+              break;
+            }
+          } catch {
+            // 走重试
           }
-          const medias = json.data?.medias ?? [];
-          for (const m of medias) {
-            rawItems.push({ bvid: m.bvid, title: m.title, cover: m.cover, fav_time: m.fav_time, upper: m.upper });
-          }
-          if (!json.data?.has_more || medias.length === 0) break;
-        } catch {
-          this.failures += 1;
-          break;
+          if (attempt === 0) await new Promise((r) => setTimeout(r, 2000));
         }
+        if (!json || json.code !== 0) {
+          this.failures += 1;
+          throw new Error(`SYNC_001: B站收藏列表接口失败（收藏夹「${folder.title}」第 ${pn} 页, code=${json?.code ?? "network"}），本次同步中止以免漏单`);
+        }
+        const medias = json.data?.medias ?? [];
+        for (const m of medias) {
+          rawItems.push({ bvid: m.bvid, title: m.title, cover: m.cover, fav_time: m.fav_time, upper: m.upper });
+        }
+        if (!json.data?.has_more || medias.length === 0) break;
         await new Promise((r) => setTimeout(r, 500)); // 风控友好：请求间隔
       }
     }
@@ -163,6 +179,16 @@ export class BilibiliAdapter extends BaseAdapter {
     };
     if (view.code !== 0) {
       this.failures += 1;
+      // 稿件删除/不可见/仅自见：标记 deleted 而不是抛错，避免单条失效视频中断整个深度同步
+      if (view.code === -404 || view.code === 62002 || view.code === 62012) {
+        return {
+          description: undefined,
+          transcript: undefined,
+          comments: [],
+          contentType: "video",
+          deleted: true,
+        };
+      }
       throw new Error(`B站 view error code=${view.code}`);
     }
     const aid = view.data?.aid;
@@ -233,12 +259,8 @@ export class BilibiliAdapter extends BaseAdapter {
     this.failures = 0;
   }
 
-  private async getFavoriteFolders(ctx: BrowserContext): Promise<FavoriteFolder[]> {
+  private async getFavoriteFolders(ctx: BrowserContext, mid: number): Promise<FavoriteFolder[]> {
     const mixinKey = await this.mixinKey(ctx);
-    const navRes = await ctx.request.get(NAV_URL, { headers: { "User-Agent": UA } });
-    const nav = (await navRes.json()) as { data?: { mid?: number } };
-    const mid = nav.data?.mid;
-    if (!mid) return [];
     const params = signParams({ up_mid: String(mid) }, mixinKey);
     const res = await ctx.request.get(FOLDERS_URL, {
       params,
@@ -253,6 +275,19 @@ export class BilibiliAdapter extends BaseAdapter {
       throw new Error(`B站 folders error code=${json.code}`);
     }
     return (json.data?.list ?? []).map((f) => ({ id: f.id, title: f.title }));
+  }
+
+  /** 校验登录态并返回 mid；未登录时抛 AUTH_002（由管线展示给用户，提示重新登录）。 */
+  private async requireLogin(ctx: BrowserContext): Promise<number> {
+    const navRes = await ctx.request.get(NAV_URL, { headers: { "User-Agent": UA } });
+    const nav = (await navRes.json()) as {
+      code: number;
+      data?: { isLogin?: boolean; mid?: number };
+    };
+    if (nav.code !== 0 || !nav.data?.isLogin || !nav.data?.mid) {
+      throw new Error("AUTH_002: bilibili 未登录或会话已失效，请在插件设置中重新登录");
+    }
+    return nav.data.mid;
   }
 
   private async mixinKey(ctx: BrowserContext): Promise<string> {

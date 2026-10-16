@@ -173,7 +173,11 @@ pnpm test
 
 ## Star 增长趋势
 
-[![Star 增长趋势图](https://api.star-history.com/svg?repos=simonemuller6127-png/omni-collector&type=Date)](https://star-history.com/#simonemuller6127-png/omni-collector&Date)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=simonemuller6127-png/omni-collector&type=Date&theme=dark" />
+  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=simonemuller6127-png/omni-collector&type=Date" />
+  <img alt="Star 增长趋势图" src="https://api.star-history.com/svg?repos=simonemuller6127-png/omni-collector&type=Date" />
+</picture>
 
 图表由 Star History 提供，可能存在缓存延迟。图片未加载时，可[打开交互图表](https://star-history.com/#simonemuller6127-png/omni-collector&Date)。
 

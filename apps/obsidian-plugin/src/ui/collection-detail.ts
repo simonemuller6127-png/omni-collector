@@ -71,6 +71,11 @@ export class OmniCollectionDetailView extends ItemView {
     return "Omni Collector 内容预览";
   }
 
+  /** 视图标识图标：内容预览用「翻开的书」，与其他视图区分。 */
+  getIcon(): string {
+    return "book-open";
+  }
+
   getState(): Record<string, unknown> {
     return { collectionId: this.currentId };
   }

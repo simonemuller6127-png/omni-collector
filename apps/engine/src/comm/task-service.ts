@@ -18,6 +18,7 @@ import {
 } from "@omni/database";
 import type { CollectionDTO } from "@omni/shared-core";
 import { AiQueueRunner } from "../ai/ai-queue-runner.js";
+import { findNearDuplicateTags } from "../tags/tag-utils.js";
 import { ContentGroupService, normalizeEntity } from "../group/content-group-service.js";
 import { buildSemanticIndex, semanticRelated, type SemanticDoc } from "../group/semantic-related.js";
 import { FileIndexer } from "../fileindex/file-indexer.js";
@@ -619,14 +620,27 @@ export class TaskService {
     }
   }
 
-  /** Tag Atlas 列表（PRD 16.2）：名称/数量/别名。 */
+  /** Tag Atlas 列表（PRD 16.2）：名称/数量/别名 + 疑似重复（仅内容标签参与）。 */
   async tagList(msg: OmniMessage): Promise<OmniMessage> {
     try {
       const tags = new TagRepository(this.db).listTags();
-      return complete(msg.request_id, { task: "tag_list", tags });
+      const duplicateTags = this.nearDuplicateTagHints(tags.map((t) => t.name));
+      return complete(msg.request_id, { task: "tag_list", tags, duplicateTags });
     } catch (err) {
       return error(msg.request_id, "TAG_002", `TAG_002: ${(err as Error).message}`);
     }
+  }
+
+  /**
+   * 疑似重复 Tag 权威实现（findNearDuplicateTags，O(n^2)）：
+   * 阈值与截断数全部来自 business_rules，Tag 数不足阈值时直接返回空（避免小库白跑）。
+   * 形式标签只写 collections.content_type、从不进 tags 表，故此处无需额外过滤。
+   */
+  private nearDuplicateTagHints(tagNames: string[]): Array<{ a: string; b: string }> {
+    const minCount = this.rules.getNumber("ai_duplicate_tag_min_count", 20);
+    if (tagNames.length < minCount) return [];
+    const limit = Math.max(1, this.rules.getNumber("ai_duplicate_tag_report_limit", 20));
+    return findNearDuplicateTags(tagNames, limit).map((p) => ({ a: p.a, b: p.b }));
   }
 
   /** 为 Tag 添加别名（PRD 16.2）：任意别名搜索命中主 Tag 全部内容。 */
@@ -1191,6 +1205,8 @@ export class TaskService {
     return (
       {
         suggested_tag: "ai_tag_accepted",
+        suggested_content_tags: "ai_content_tag_accepted",
+        suggested_content_type: "ai_content_type_accepted",
         suggested_topic: "ai_topic_accepted",
         suggested_summary: "ai_summary_accepted",
         suggested_group: "ai_group_accepted",
@@ -1202,6 +1218,8 @@ export class TaskService {
     return (
       {
         suggested_tag: "ai_tag_rejected",
+        suggested_content_tags: "ai_content_tag_rejected",
+        suggested_content_type: "ai_content_type_rejected",
         suggested_topic: "ai_topic_rejected",
         suggested_summary: "ai_summary_rejected",
         suggested_group: "ai_group_rejected",
@@ -1244,6 +1262,36 @@ export class TaskService {
           tagIds.push(tag.id);
         }
         return { tag_ids: tagIds };
+      }
+      case "suggested_content_tags": {
+        // 内容标签：与 suggested_tag 共用同一条写入路径。
+        // TagRepository.ensureTag()（tag.repository.ts:37-46）内部第一件事就是
+        // findByNameOrAlias（第 39 行），故此处命中别名即落到主 tag，
+        // 不会新增「开发指南」式新行——这是既有归一化的显式化调用点。
+        const tags = new TagRepository(this.db);
+        const maxCount = Math.max(1, this.rules.getNumber("ai_tag_max_count", 7));
+        const tagNames = parseTagPayload(payload).slice(0, maxCount);
+        const tagIds: string[] = [];
+        for (const name of tagNames) {
+          const tag = tags.findByNameOrAlias(name) ?? tags.ensureTag(name);
+          tags.bindTag(suggestion.collection_id, tag.id, "ai");
+          tagIds.push(tag.id);
+        }
+        return { tag_ids: tagIds };
+      }
+      case "suggested_content_type": {
+        // 形式标签：只写 collections.content_type 列，永不进 tags 表（PRD 16.2）。
+        const contentType = payload.trim();
+        if (!contentType) return {};
+        const before = (
+          this.db
+            .prepare("SELECT content_type FROM collections WHERE id = ?")
+            .get(suggestion.collection_id) as { content_type?: string | null } | undefined
+        )?.content_type;
+        this.db
+          .prepare("UPDATE collections SET content_type = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(contentType, suggestion.collection_id);
+        return { content_type: contentType, previous_content_type: before ?? null };
       }
       case "suggested_summary": {
         this.db
@@ -1290,7 +1338,10 @@ export class TaskService {
       const data = JSON.parse(feedback.event_data) as Record<string, unknown>;
       const topics = new TopicRepository(this.db);
       const groups = new ContentGroupRepository(this.db);
-      if (feedback.event_type === "ai_tag_accepted" && Array.isArray(data.tag_ids)) {
+      if (
+        (feedback.event_type === "ai_tag_accepted" || feedback.event_type === "ai_content_tag_accepted") &&
+        Array.isArray(data.tag_ids)
+      ) {
         const placeholders = (data.tag_ids as string[]).map(() => "?").join(",");
         this.db
           .prepare(
@@ -1298,6 +1349,14 @@ export class TaskService {
              WHERE collection_id = ? AND source = 'ai' AND tag_id IN (${placeholders})`,
           )
           .run(suggestion.collection_id, ...(data.tag_ids as string[]));
+      } else if (
+        feedback.event_type === "ai_content_type_accepted" &&
+        typeof data.content_type === "string"
+      ) {
+        // 形式标签撤销：还原该列上一值（可能为 NULL）
+        this.db
+          .prepare("UPDATE collections SET content_type = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(data.previous_content_type ?? null, suggestion.collection_id);
       } else if (feedback.event_type === "ai_topic_accepted" && typeof data.topic_id === "string") {
         topics.removeCollection(data.topic_id, suggestion.collection_id);
       } else if (feedback.event_type === "ai_summary_accepted") {

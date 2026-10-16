@@ -9,12 +9,18 @@ export interface ManualAISource {
   submit(collectionId: string, reply: string): Promise<void>;
 }
 
+export interface ManualAIOptions {
+  /** 热门评论进 prompt 的条数上限（business_rules ai_comment_context_limit，缺省走纯函数默认）。 */
+  commentLimit?: number;
+}
+
 /** 打开 Manual AI 弹窗（详情页 / 侧边栏 / 全局入口共用）。 */
 export function openManualAIModal(
   app: App,
   item: CollectionDTO,
   source: ManualAISource,
   vocabulary?: ManualVocabulary,
+  options?: ManualAIOptions,
 ): void {
   const modal = new Modal(app);
   modal.titleEl.setText("Manual 模式 AI（PRD 19.3）");
@@ -22,7 +28,7 @@ export function openManualAIModal(
   const tpl = modal.contentEl.createEl("textarea", {
     attr: { rows: "12", style: "width:100%;" },
   });
-  tpl.value = buildManualTemplate(item, vocabulary);
+  tpl.value = buildManualTemplate(item, vocabulary, { commentLimit: options?.commentLimit });
   modal.contentEl
     .createEl("button", { text: "复制模板", cls: "omni-btn omni-btn-sm" })
     .addEventListener("click", () => {

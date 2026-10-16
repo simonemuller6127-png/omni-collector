@@ -227,6 +227,29 @@
   gap: 8px;
   align-items: start;
 }
+
+/* 瀑布流排布：多列错落（借鉴 Pinterest/Masonry），封面按原图比例展示 */
+.omni-card-waterfall {
+  display: block;
+  columns: 3 220px;
+  column-gap: 8px;
+}
+.omni-card-waterfall .omni-card {
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 8px;
+  break-inside: avoid;
+}
+.omni-card-waterfall .omni-card-cover-wrap {
+  aspect-ratio: auto;
+  max-height: 420px;
+}
+.omni-card-waterfall .omni-card-cover {
+  height: auto;
+  max-height: 420px;
+  object-fit: cover;
+  object-position: top;
+}
 .omni-card {
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;

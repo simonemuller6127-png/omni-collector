@@ -1,6 +1,6 @@
 import { App, ItemView, Modal, Notice, Setting, WorkspaceLeaf } from "obsidian";
 import type { CollectionDTO } from "@omni/shared-core";
-import { filterCollections, nextOrganizeState, platformMeta, VIEW_PRESETS, type CollectionFilter } from "./helpers.js";
+import { filterCollections, nextOrganizeState, platformMeta, VIEW_PRESETS, withDeletedLast, type CollectionFilter } from "./helpers.js";
 
 export const VIEW_TYPE_OMNI_LIST = "omni-collector-list";
 
@@ -10,6 +10,8 @@ export interface ListDataSource {
   onOpenDetail(collectionId: string): void;
   onBatch(ids: string[], action: "tag" | "topic" | "priority" | "organize" | "convert", value: string): Promise<void>;
   getDefaultViewMode(): "list" | "card";
+  getCardLayout(): "flat" | "waterfall";
+  setCardLayout(layout: "flat" | "waterfall"): void;
   onOrganize(collectionId: string, state: CollectionDTO["organizeStatus"]): Promise<void>;
   onTag(collectionId: string, tag: string): Promise<void>;
   onTopic(collectionId: string, topic: string): Promise<void>;
@@ -95,6 +97,7 @@ export class OmniCollectionListView extends ItemView {
   private activePreset = "all";
   private mode: "collections" | "local" = "collections";
   private viewMode: "list" | "card" = "list";
+  private cardLayout: "flat" | "waterfall" = "flat";
   private coverCache = new Map<string, string>();
   private selecting = false;
   private readonly selected = new Set<string>();
@@ -119,6 +122,11 @@ export class OmniCollectionListView extends ItemView {
     return "Omni Collector 收藏";
   }
 
+  /** 视图标识图标：收藏列表用「库」，与主控台/详情/AI 审核区分。 */
+  getIcon(): string {
+    return "library";
+  }
+
   getState(): Record<string, unknown> {
     return { platform: this.platformFilter };
   }
@@ -132,6 +140,7 @@ export class OmniCollectionListView extends ItemView {
     const initial = (this.getState().platform as string | null) ?? null;
     this.platformFilter = initial;
     this.viewMode = this.source.getDefaultViewMode();
+    this.cardLayout = this.source.getCardLayout();
     const container = this.containerEl.children[1];
     container.empty();
     container.addClass("omni-list-view");
@@ -214,6 +223,15 @@ export class OmniCollectionListView extends ItemView {
     if (this.mode === 'collections') {
     tb.createEl('button', { text: this.viewMode === 'list' ? '切换卡片视图' : '切换列表视图', cls: 'omni-chip' })
       .addEventListener('click', () => { this.viewMode = this.viewMode === 'list' ? 'card' : 'list'; this.renderToolbar(); void this.renderList(); });
+    if (this.viewMode === 'card') {
+      tb.createEl('button', { text: this.cardLayout === 'waterfall' ? '切换平铺' : '切换瀑布流', cls: `omni-chip${this.cardLayout === 'waterfall' ? ' omni-chip-active' : ''}` })
+        .addEventListener('click', () => {
+          this.cardLayout = this.cardLayout === 'waterfall' ? 'flat' : 'waterfall';
+          this.source.setCardLayout(this.cardLayout);
+          this.renderToolbar();
+          void this.renderList();
+        });
+    }
     if (this.mode === 'collections') {
       tb.createEl('button', { text: this.selecting ? '完成选择' : '批量选择', cls: `omni-chip${this.selecting ? ' omni-chip-active' : ''}` })
         .addEventListener('click', () => {
@@ -302,12 +320,14 @@ export class OmniCollectionListView extends ItemView {
     if (this.platformFilter) items = items.filter((i) => i.platform === this.platformFilter);
     if (this.saveTypeFilter !== 'all') items = items.filter((i) => i.saveType === this.saveTypeFilter);
     if (this.sortByRating) {
-      // 评分排序（PRD 29.2：user_rating 参与排序）；未评分排最后，同分按收藏时间倒序
-      items = [...items].sort((a, b) => {
-        const ra = a.rating ?? 0;
-        const rb = b.rating ?? 0;
-        return rb - ra || new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime();
-      });
+      // 评分排序（PRD 29.2：user_rating 参与排序）；未评分排最后，同分按收藏时间倒序；失效内容始终沉底
+      items = [...items].sort(
+        withDeletedLast((a, b) => {
+          const ra = a.rating ?? 0;
+          const rb = b.rating ?? 0;
+          return rb - ra || new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime();
+        }),
+      );
     }
     if (this.ratedOnly) items = items.filter((i) => !!i.rating);
     if (this.recentDays > 0) {
@@ -320,7 +340,9 @@ export class OmniCollectionListView extends ItemView {
       return;
     }
     if (this.viewMode === 'card') {
-      const grid = this.listEl.createEl('div', { cls: 'omni-card-grid' });
+      const grid = this.listEl.createEl('div', {
+        cls: this.cardLayout === 'waterfall' ? 'omni-card-grid omni-card-waterfall' : 'omni-card-grid',
+      });
       for (const item of items) {
         const m = platformMeta(item.platform);
         const card = grid.createEl('div', { cls: 'omni-card' });

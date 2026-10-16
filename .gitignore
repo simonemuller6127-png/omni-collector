@@ -29,6 +29,19 @@ backup/
 # AI temporary workspace (never commit)
 _codex_tmp/
 
+# Local-only scripts (contain machine-specific paths; keep out of the repo)
+scripts/bulk-tag.mjs
+scripts/sync-markdown.mjs
+
+# Local-only artifacts (runtime reports, personal images, caches)
+tag-normalize-report.json
+submit.html
+Gemini_Generated_Image*.jpg
+.corepack-bin/
+
+# Personal docs (not part of the plugin)
+docs/PROMOTION-PLAN.md
+
 # Editor / OS
 .vscode/
 .idea/

@@ -9,9 +9,14 @@ import {
   SyncLogRepository,
   TagRepository,
 } from "@omni/database";
-import { extractHashtags } from "../tags/tag-utils.js";
+import { extractHashtags, findNearDuplicateTags } from "../tags/tag-utils.js";
 
 export type SyncMode = "catalog" | "full" | "detail";
+
+export interface DuplicateTagHint {
+  a: string;
+  b: string;
+}
 
 export interface SyncReport {
   platform: string;
@@ -24,6 +29,12 @@ export interface SyncReport {
   itemsFetched: number;
   errorCode?: string;
   errorDetail?: string;
+  /**
+   * 疑似重复 Tag（仅内容标签参与——形式标签只写 collections.content_type，从不进 tags 表）。
+   * 阈值与截断数均来自 business_rules（ai_duplicate_tag_min_count /
+   * ai_duplicate_tag_report_limit），不在代码里硬编码。
+   */
+  duplicateTags?: DuplicateTagHint[];
 }
 
 export interface SyncPipelineDeps {
@@ -71,6 +82,8 @@ export class SyncPipeline {
     };
     try {
       const adapter = this.deps.getAdapter(platform);
+      // 入库前先校验会话：失效立即抛 AUTH_002，避免抓到 0 条还报 success
+      await adapter.authenticate(ctx!);
       const account = this.deps.accounts.getOrCreate(platform);
       const cursor = account.sync_cursor ? (JSON.parse(account.sync_cursor) as { page?: number }) : {};
       const raws = await adapter.fetchCatalog(ctx!, cursor);
@@ -92,7 +105,8 @@ export class SyncPipeline {
           title: raw.title,
           author: raw.author,
           cover_url: raw.coverUrl,
-          collected_at: raw.collectedAt,
+          // 平台未提供收藏时间时不覆盖已有值（否则每次同步都会把该条目顶到时间线最前）
+          ...(raw.collectedAt ? { collected_at: raw.collectedAt } : {}),
           save_type: raw.saveType,
           content_type: contentType,
           extra_json: raw.extra ? JSON.stringify(raw.extra) : undefined,
@@ -150,13 +164,27 @@ export class SyncPipeline {
         }
       }
       this.deps.accounts.updateCursor(platform, JSON.stringify({ page: (cursor.page ?? 1) + 1 }));
+      // 疑似重复检测前置到同步完成现场（只在 tags 依赖存在且数量达阈值时才跑 O(n^2)）
+      if (this.deps.tags) {
+        const minCount = this.deps.rules.getNumber("ai_duplicate_tag_min_count", 20);
+        const reportLimit = Math.max(1, this.deps.rules.getNumber("ai_duplicate_tag_report_limit", 20));
+        const allTags = this.deps.tags.listTags();
+        if (allTags.length >= minCount) {
+          report.duplicateTags = findNearDuplicateTags(
+            allTags.map((t) => t.name),
+            reportLimit,
+          ).map((p) => ({ a: p.a, b: p.b }));
+        }
+      }
       report.itemsAdded = added;
       report.itemsUpdated = updated;
     } catch (err) {
+      const msg = (err as Error).message;
       report.status = "failed";
-      report.errorCode = "SYNC_001";
-      report.errorDetail = (err as Error).message;
-      this.deps.accounts.setStatus(platform, "error", (err as Error).message);
+      // 适配器抛出的语义化错误码（AUTH_/SYNC_/LOGIN_...）透传，供插件匹配报错文档
+      report.errorCode = /^(AUTH|SYNC|LOGIN|ENGINE)_\d{3}/.exec(msg)?.[0] ?? "SYNC_001";
+      report.errorDetail = msg;
+      this.deps.accounts.setStatus(platform, "error", msg);
     }
     report.finishedAt = new Date().toISOString();
     this.deps.logs.add({

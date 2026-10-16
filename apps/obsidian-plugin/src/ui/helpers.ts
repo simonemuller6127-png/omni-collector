@@ -53,6 +53,14 @@ function haystackOf(c: CollectionDTO): string {
     .toLowerCase();
 }
 
+/** 排序规则：原内容已删除的收藏自动沉底（不参与正常时间线），其余按给定比较器。 */
+export function withDeletedLast(
+  cmp: (a: CollectionDTO, b: CollectionDTO) => number,
+): (a: CollectionDTO, b: CollectionDTO) => number {
+  return (a, b) =>
+    (a.contentStatus === "deleted" ? 1 : 0) - (b.contentStatus === "deleted" ? 1 : 0) || cmp(a, b);
+}
+
 export function filterCollections(
   items: CollectionDTO[],
   filter: CollectionFilter,
@@ -62,7 +70,7 @@ export function filterCollections(
     .filter((c) => (filter.status ? c.organizeStatus === filter.status : true))
     .filter((c) => (filter.priority ? c.priority === filter.priority : true))
     .filter((c) => (keyword ? haystackOf(c).includes(keyword) : true))
-    .sort((a, b) => b.collectedAt.localeCompare(a.collectedAt));
+    .sort(withDeletedLast((a, b) => b.collectedAt.localeCompare(a.collectedAt)));
 }
 
 /**

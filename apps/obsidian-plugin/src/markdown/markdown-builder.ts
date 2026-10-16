@@ -1,4 +1,12 @@
 import type { CollectionDTO, UserZone } from "@omni/shared-core";
+import {
+  isHierarchicalTopic,
+  parseTopicSegments,
+  topicDepth,
+  topicHubRelPath,
+  topicLeafName,
+  topicParentPath,
+} from "./topic-path.js";
 
 const SYSTEM_START = "<!-- OMNI_SYSTEM_START -->";
 const SYSTEM_END = "<!-- OMNI_SYSTEM_END -->";
@@ -16,6 +24,14 @@ function escapeTitleHash(title: string): string {
 /** 文件名安全化（Windows 非法字符 + 长度）。 */
 export function sanitizeFilename(name: string): string {
   return (name || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
+}
+
+/**
+ * Topic 名 → hub wikilink 相对路径（相对 Omni Collector/Topics/）。
+ * 层级 Topic 走路径命名：「游戏:F1赛车」→ "游戏/F1赛车"；单级保持旧行为。
+ */
+export function topicHubWikilinkPath(topicName: string): string {
+  return topicHubRelPath(topicName, sanitizeFilename);
 }
 
 function escapeRegExp(s: string): string {
@@ -139,7 +155,7 @@ export class MarkdownBuilder {
 
   private buildGraphLinks(dto: CollectionDTO): string {
     const topicLinks = (dto.topics ?? [])
-      .map((t) => `- [[Omni Collector/Topics/${sanitizeFilename(t)}]]`)
+      .map((t) => `- [[Omni Collector/Topics/${topicHubWikilinkPath(t)}]]`)
       .join("\n");
     const tagLinks = (dto.tags ?? [])
       .map((t) => `- [[Omni Collector/Tags/${sanitizeFilename(t)}]]`)
@@ -147,13 +163,25 @@ export class MarkdownBuilder {
     return [topicLinks, tagLinks].filter(Boolean).join("\n");
   }
 
-  /** Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。 */
+  /**
+   * Topic 聚合页（PRD 17 / 关系图谱联动）：wikilink 指向全部成员笔记。
+   * 多级 Topic 走路径命名：「游戏:F1赛车」落 Topics/游戏/F1赛车.md，
+   * frontmatter 带 parent: "游戏"，H1 用叶子名（与文件名一致，利于图谱识别）。
+   */
   buildTopicHub(topicName: string, noteLinks: string[]): string {
     const name = (topicName || "未命名主题").trim();
+    const parent = topicParentPath(name);
+    const leaf = topicLeafName(name) || name;
     return this.buildHub(name, noteLinks, {
       frontmatterKey: "topic",
       tags: [JSON.stringify(`topic/${sanitizeFilename(name)}`)],
       dataviewField: "topics",
+      /** 层级 Topic 的父级（无层级不带该键，保持旧格式兼容）。 */
+      extraFrontmatter: parent ? [{ key: "parent", value: yamlString(parent) }] : undefined,
+      /** H1 用叶子名；单级 Topic 与旧行为完全一致。 */
+      displayName: leaf,
+      /** 系统区「层级」段：父级链接 + 深度（路径命名实现多级，无 parent_id migration）。 */
+      hierarchy: parent ? { parent, depth: topicDepth(name) } : undefined,
     });
   }
 
@@ -175,21 +203,34 @@ export class MarkdownBuilder {
   private buildHub(
     name: string,
     noteLinks: string[],
-    cfg: { frontmatterKey: "topic" | "tag"; tags: string[]; dataviewField: "topics" | "tags" },
+    cfg: {
+      frontmatterKey: "topic" | "tag";
+      tags: string[];
+      dataviewField: "topics" | "tags";
+      /** 附加 frontmatter 键（如层级 Topic 的 parent）。 */
+      extraFrontmatter?: Array<{ key: string; value: string }>;
+      /** H1 展示名（层级 Topic 用叶子名）；缺省回退到 name。 */
+      displayName?: string;
+      /** 层级信息（仅 topic 且有父级时传入，用于系统区「层级」段）。 */
+      hierarchy?: { parent: string; depth: number };
+    },
   ): string {
+    const extra = (cfg.extraFrontmatter ?? []).map((e) => `${e.key}: ${e.value}`);
+    const heading = escapeTitleHash(cfg.displayName ?? name);
     return [
       "---",
       `${cfg.frontmatterKey}: ${yamlString(name)}`,
+      ...(extra.length > 0 ? extra : []),
       `tags: [${cfg.tags.join(", ")}]`,
       "aliases: []",
       "---",
       "",
-      `# ${escapeTitleHash(name)}`,
+      `# ${heading}`,
       "",
       `> 聚合页说明：系统区（标记注释之间）由 Omni Collector 自动维护；「## 我的整理」及之后为用户区，任何自动化逻辑禁止修改。`,
       "",
       SYSTEM_START,
-      this.buildHubSystemZone(name, noteLinks, cfg.dataviewField),
+      this.buildHubSystemZone(name, noteLinks, cfg.dataviewField, cfg.hierarchy),
       SYSTEM_END,
       "",
       "## 我的整理",
@@ -197,17 +238,36 @@ export class MarkdownBuilder {
     ].join("\n");
   }
 
-  /** 聚合页系统区：成员 wikilink（图谱边）+ Dataview 动态索引（按 frontmatter 元数据实时查询）。 */
-  private buildHubSystemZone(name: string, noteLinks: string[], dataviewField: "topics" | "tags"): string {
+  /**
+   * 聚合页系统区：成员 wikilink（图谱边）+ Dataview 动态索引（按 frontmatter 元数据实时查询）。
+   * 层级 Topic 额外输出「层级」段：父级链接 + 深度，供图谱中向上导航（路径命名实现多级）。
+   */
+  private buildHubSystemZone(
+    name: string,
+    noteLinks: string[],
+    dataviewField: "topics" | "tags",
+    hierarchy?: { parent: string; depth: number },
+  ): string {
     const links = [...new Set(noteLinks.filter(Boolean))]
       .map((l) => `- [[${l.replace(/\.md$/i, "")}]]`)
       .join("\n");
     const safeName = name.replace(/"/g, "'");
+    const hierSection =
+      hierarchy && dataviewField === "topics"
+        ? [
+            "## 层级",
+            "",
+            `父级：[[Omni Collector/Topics/${topicHubWikilinkPath(hierarchy.parent)}]]`,
+            `深度：${hierarchy.depth}`,
+            "",
+          ]
+        : [];
     return [
       "## 收藏",
       "",
       links || "（暂无成员）",
       "",
+      ...hierSection,
       "## 动态索引",
       "",
       "```dataview",

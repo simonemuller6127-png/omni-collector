@@ -245,6 +245,99 @@ describe("TaskService (internal, fake provider)", () => {
     }
   });
 
+  it("accepting suggested_content_tags reuses alias normalization (hits main tag, no new row)", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv1", {
+        url: "https://x/1",
+        title: "开发教程",
+      });
+      const tags = new TagRepository(db);
+      // 主 Tag「编程开发」+ 别名「开发指北」
+      tags.addAlias("编程开发", "开发指北");
+      const tagCountBefore = tags.listTags().length;
+      const s = new AIRepository(db).saveSuggestion({
+        collection_id: col.id,
+        suggestion_type: "suggested_content_tags",
+        payload: '["开发指北","前端"]',
+      });
+      manager.close();
+
+      const h = service.handlers();
+      expect((await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: s.id, status: "accepted" })))?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const vdb = verifier.getDb();
+      const vt = new TagRepository(vdb);
+      // 别名「开发指北」命中主 Tag「编程开发」，不新增行
+      expect(vt.listCollectionsByTag("编程开发", "ai")).toContain(col.id);
+      expect(vt.listTags().map((t) => t.name)).not.toContain("开发指北");
+      expect(vt.listTags()).toHaveLength(tagCountBefore + 1); // 只新增「前端」
+      expect(vt.listCollectionsByTag("前端", "ai")).toContain(col.id);
+      // 反馈事件闭环
+      const fb = vdb.prepare("SELECT event_type FROM user_feedback WHERE collection_id = ?").all(col.id) as Array<{ event_type: string }>;
+      expect(fb.map((f) => f.event_type)).toContain("ai_content_tag_accepted");
+      verifier.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("accepting suggested_content_type writes collections.content_type only, never tags", async () => {
+    const dataDir = makeDataDir();
+    const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });
+    try {
+      const manager = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      manager.migrate();
+      const db = manager.getDb();
+      const col = new CollectionRepository(db).upsertByPlatformItem("bilibili", "bv2", {
+        url: "https://x/2",
+        title: "T",
+        content_type: "video",
+      });
+      const tagCountBefore = new TagRepository(db).listTags().length;
+      const s = new AIRepository(db).saveSuggestion({
+        collection_id: col.id,
+        suggestion_type: "suggested_content_type",
+        payload: "图文",
+      });
+      manager.close();
+
+      const h = service.handlers();
+      expect((await h.AI_REVIEW_UPDATE?.(makeMsg("AI_REVIEW_UPDATE", { suggestion_id: s.id, status: "accepted" })))?.message_type).toBe("TASK_COMPLETE");
+
+      const verifier = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier.migrate();
+      const vdb = verifier.getDb();
+      const row = vdb.prepare("SELECT content_type FROM collections WHERE id = ?").get(col.id) as { content_type: string };
+      expect(row.content_type).toBe("图文");
+      // 形式标签不进 tags 表
+      expect(new TagRepository(vdb).listTags()).toHaveLength(tagCountBefore);
+      // 反馈事件闭环
+      const fb = vdb.prepare("SELECT event_type, event_data FROM user_feedback WHERE collection_id = ?").all(col.id) as Array<{ event_type: string; event_data: string }>;
+      expect(fb.map((f) => f.event_type)).toContain("ai_content_type_accepted");
+      const evt = fb.find((f) => f.event_type === "ai_content_type_accepted");
+      expect(JSON.parse(evt!.event_data).previous_content_type).toBe("video");
+      verifier.close();
+
+      // 撤销：content_type 还原上一值
+      const h2 = service.handlers();
+      expect((await h2.AI_REVIEW_UNDO?.(makeMsg("AI_REVIEW_UNDO", { suggestion_id: s.id })))?.message_type).toBe("TASK_COMPLETE");
+      const verifier2 = new MigrationManager(path.join(dataDir, "OmniCollector.db"), path.join(dataDir, "migrations"), path.join(dataDir, "backup"));
+      verifier2.migrate();
+      const row2 = verifier2.getDb().prepare("SELECT content_type FROM collections WHERE id = ?").get(col.id) as { content_type: string };
+      expect(row2.content_type).toBe("video");
+      verifier2.close();
+    } finally {
+      service.dispose();
+    }
+  });
+
   it("accepting suggested_summary writes ai_summary and marks done", async () => {
     const dataDir = makeDataDir();
     const service = new TaskService({ dataDir, migrationsDir: path.join(dataDir, "migrations") });

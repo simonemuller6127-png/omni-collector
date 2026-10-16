@@ -10,15 +10,25 @@ import { OmniAiReviewView, VIEW_TYPE_OMNI_AI, type AiReviewSource } from "./ui/a
 import { OmniTagTopicView, VIEW_TYPE_OMNI_TAGS, type TagTopicSource } from "./ui/tag-topic.js";
 import { OmniCollectionListView, VIEW_TYPE_OMNI_LIST, type ListDataSource } from "./ui/collection-list.js";
 import { OmniCollectionDetailView, VIEW_TYPE_OMNI_DETAIL, type DetailDataSource } from "./ui/collection-detail.js";
-import { MarkdownBuilder, sanitizeFilename, renderRating } from "./markdown/markdown-builder.js";
+import {
+  MarkdownBuilder,
+  sanitizeFilename,
+  renderRating,
+  topicHubWikilinkPath,
+} from "./markdown/markdown-builder.js";
+import { ensureDir, topicLeafName } from "./markdown/topic-path.js";
+import { formatErrorWithDoc } from "./errors.js";
 import { openManualAIModal } from "./ui/manual-ai.js";
 import { openManualAIBatchModal } from "./ui/manual-ai-batch.js";
+import { DEFAULT_MANUAL_COMMENT_LIMIT } from "./ui/manual-template.js";
 import { dailyCapReached, isSyncDue } from "./sync/sync-scheduler.js";
 import { pickDailyReview } from "./ui/helpers.js";
 
 export default class OmniCollectorPlugin extends Plugin {
   pluginSettings!: OmniSettings;
   engine!: EngineClient;
+  /** 最近一次同步报告的疑似重复 Tag（仅内容标签；形式标签不进 Tag Atlas）。 */
+  lastDuplicateTags: Array<{ a: string; b: string }> = [];
 
   async onload(): Promise<void> {
     this.pluginSettings = await loadSettings(this);
@@ -59,6 +69,11 @@ export default class OmniCollectorPlugin extends Plugin {
         onOpenDetail: (id) => void this.openCollectionDetail(id),
         onBatch: (ids, action, value) => this.engine.batch(ids, action, value).then(() => undefined),
         getDefaultViewMode: () => this.pluginSettings.viewMode,
+        getCardLayout: () => this.pluginSettings.cardLayout ?? "flat",
+        setCardLayout: (layout) => {
+          this.pluginSettings.cardLayout = layout;
+          void this.saveSettings();
+        },
         onOrganize: (id, state) => this.engine.setOrganizeState(id, state).then(() => undefined),
         onTag: (id, tag) => this.engine.addTag(id, tag).then(() => undefined),
         onTopic: (id, topic) => this.engine.addTopic(id, topic).then(() => undefined),
@@ -119,6 +134,7 @@ export default class OmniCollectorPlugin extends Plugin {
     this.registerView(VIEW_TYPE_OMNI_TAGS, (leaf) => {
       const source: TagTopicSource = {
         listTags: () => this.engine.listTags(),
+        listDuplicateTags: () => this.engine.listDuplicateTags(),
         addAlias: (tag, alias) => this.engine.addTagAlias(tag, alias).then(() => undefined),
         mergeTags: (sourceTag, target) => this.engine.mergeTags(sourceTag, target).then(() => undefined),
         renameTag: async (tag, next) => {
@@ -255,6 +271,18 @@ export default class OmniCollectorPlugin extends Plugin {
   private autoScanTimer: number | null = null;
   private syncTimer: number | null = null;
 
+  /**
+   * 缓存引擎同步报告的疑似重复 Tag，并把提示条推给侧边栏。
+   * 形式标签只写 collections.content_type、从不进 tags 表，故这里无需额外过滤。
+   */
+  private setDuplicateHints(hints: Array<{ a: string; b: string }>): void {
+    this.lastDuplicateTags = hints;
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_OMNI)) {
+      const view = leaf.view;
+      if (view instanceof OmniSidebarView) view.setDuplicateHints(hints);
+    }
+  }
+
   async saveSettings(): Promise<void> {
     await saveSettings(this, this.pluginSettings);
   }
@@ -357,12 +385,17 @@ export default class OmniCollectorPlugin extends Plugin {
       },
       syncAll: () => this.syncAllAndRender(),
       syncPlatform: async (platform) => {
-        const res = await this.engine.syncPlatform(platform, this.pluginSettings.initialSyncMode);
-        const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number; itemsFetched?: number };
-        if (report.status === "success") {
-          new Notice(`Omni Collector: ${platform} 抓取 ${report.itemsFetched ?? 0} 条（+${report.itemsAdded ?? 0} 新增 / ${report.itemsUpdated ?? 0} 更新）`);
-        } else {
-          new Notice(`Omni Collector: ${platform} 同步失败 ${String(res.payload?.message ?? "")}`);
+        try {
+          const res = await this.engine.syncPlatform(platform, this.pluginSettings.initialSyncMode);
+          const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number; itemsFetched?: number; errorDetail?: string; duplicateTags?: Array<{ a: string; b: string }> };
+          if (Array.isArray(report.duplicateTags)) this.setDuplicateHints(report.duplicateTags);
+          if (report.status === "success") {
+            new Notice(`Omni Collector: ${platform} 抓取 ${report.itemsFetched ?? 0} 条（+${report.itemsAdded ?? 0} 新增 / ${report.itemsUpdated ?? 0} 更新）`);
+          } else {
+            new Notice(formatErrorWithDoc(report.errorDetail ?? `${platform} 同步失败`), 15000);
+          }
+        } catch (err) {
+          new Notice(formatErrorWithDoc((err as Error).message), 15000);
         }
       },
       deepSyncPlatform: (platform) => this.deepSyncPlatform(platform),
@@ -435,12 +468,16 @@ export default class OmniCollectorPlugin extends Plugin {
   /** 深度历史同步：按设置的回溯深度拉取。 */
   async deepSyncPlatform(platform: string): Promise<void> {
     const depth = this.pluginSettings.deepSyncDepth;
-    const res = await this.engine.syncPlatform(platform, "full", depth);
-    const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number };
-    if (report.status === "success") {
-      new Notice(`深度同步完成：${platform} +${report.itemsAdded ?? 0} 新增 / ${report.itemsUpdated ?? 0} 更新`);
-    } else {
-      new Notice(`深度同步失败：${platform}`);
+    try {
+      const res = await this.engine.syncPlatform(platform, "full", depth);
+      const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number; errorDetail?: string };
+      if (report.status === "success") {
+        new Notice(`深度同步完成：${platform} +${report.itemsAdded ?? 0} 新增 / ${report.itemsUpdated ?? 0} 更新`);
+      } else {
+        new Notice(formatErrorWithDoc(report.errorDetail ?? `深度同步失败：${platform}`), 15000);
+      }
+    } catch (err) {
+      new Notice(formatErrorWithDoc((err as Error).message), 15000);
     }
   }
 
@@ -478,22 +515,27 @@ export default class OmniCollectorPlugin extends Plugin {
     let fetched = 0;
     let added = 0;
     let updated = 0;
+    const failures: string[] = [];
     for (const platform of platforms) {
       try {
         const res = await this.engine.syncPlatform(platform, this.pluginSettings.initialSyncMode);
-        const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number; itemsFetched?: number };
+        const report = (res.payload?.report ?? {}) as { status?: string; itemsAdded?: number; itemsUpdated?: number; itemsFetched?: number; errorDetail?: string; duplicateTags?: Array<{ a: string; b: string }> };
+        if (Array.isArray(report.duplicateTags)) this.setDuplicateHints(report.duplicateTags);
         if (report.status === "success") {
           ok += 1;
           fetched += report.itemsFetched ?? 0;
           added += report.itemsAdded ?? 0;
           updated += report.itemsUpdated ?? 0;
+        } else {
+          failures.push(platform);
         }
       } catch {
-        // 单平台失败不中断
+        failures.push(platform);
       }
     }
     await this.generateCollectionMarkdown();
-    new Notice(`Omni Collector: 同步完成 ${ok}/${platforms.length} 平台，共抓取 ${fetched} 条（+${added} 新增 / ${updated} 更新）`);
+    const failHint = failures.length > 0 ? `\n失败：${failures.join("、")}（悬停侧边栏平台状态点查看原因与修复）` : "";
+    new Notice(`Omni Collector: 同步完成 ${ok}/${platforms.length} 平台，共抓取 ${fetched} 条（+${added} 新增 / ${updated} 更新）${failHint}`, 10000);
   }
 
   /** 查询收藏并写入 vault：Omni Collector/{平台}/{标题}.md（仅更新系统区）。 */
@@ -528,7 +570,9 @@ export default class OmniCollectorPlugin extends Plugin {
         // 跳过单个文件写入失败
       }
     }
-    // Topic 聚合页（PRD 17 / 关系图谱联动）
+    // Topic 聚合页（PRD 17 / 关系图谱联动）。多级 Topic 走路径命名：
+    // 「游戏:F1赛车」→ Topics/游戏/F1赛车.md（frontmatter parent + 叶子名 H1），
+    // 不做 topics.parent_id migration；父级目录按需递归创建。
     const topics = await this.engine.listTopics().catch(() => []);
     if (topics.length > 0) {
       const topicDir = `${folder}/Topics`;
@@ -544,14 +588,20 @@ export default class OmniCollectorPlugin extends Plugin {
             return `Omni Collector/${dto.platform}/${sanitizeFilename(dto.title || dto.platformItemId)}`;
           })
           .filter(Boolean);
-        const hubPath = `${topicDir}/${sanitizeFilename(topic.name)}.md`;
+        const relPath = topicHubWikilinkPath(topic.name);
+        const hubPath = `${topicDir}/${relPath}.md`;
         try {
+          // 层级 Topic 的父级目录可能尚不存在（exists 在 adapter、createFolder 在 vault）
+          const nested = hubPath.slice(0, hubPath.lastIndexOf("/"));
+          if (nested && nested !== topicDir) {
+            await ensureDir(vault.adapter, vault, nested);
+          }
           const fresh = builder.buildTopicHub(topic.name, links);
           if (await vault.adapter.exists(hubPath)) {
             const existing = await vault.adapter.read(hubPath);
             // 新格式：仅替换系统区（用户区/frontmatter aliases 保留）；旧格式一次性升级
             const next = builder.validateMarkers(existing)
-              ? (builder.replaceHubSystemZone(existing, topic.name, links, "topics") ?? fresh)
+              ? (builder.replaceHubSystemZone(existing, topicLeafName(topic.name), links, "topics") ?? fresh)
               : fresh;
             await vault.adapter.write(hubPath, next);
           } else {
@@ -684,9 +734,25 @@ export default class OmniCollectorPlugin extends Plugin {
   }
 
   /** Manual AI 全局入口：先选收藏，再打开模板（PRD 19.3）。 */
+  /**
+   * 从引擎 business_rules 读「热门评论」条数上限（ai_comment_context_limit，默认 5）。
+   * Manual AI 模板与队列路径共用同一口径；引擎不可用时回落纯函数默认，不让 Manual 弹窗失败。
+   */
+  private async commentContextLimit(): Promise<number> {
+    try {
+      const { rules } = await this.engine.listRules();
+      const entry = rules.find((r) => r.rule_key === "ai_comment_context_limit");
+      const n = Number(entry?.rule_value);
+      return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MANUAL_COMMENT_LIMIT;
+    } catch {
+      return DEFAULT_MANUAL_COMMENT_LIMIT;
+    }
+  }
+
   private async openManualAIPicker(): Promise<void> {
     const collections = await this.engine.listCollections().catch(() => []);
     const vocabulary = await this.tagVocabulary().catch(() => undefined);
+    const commentLimit = await this.commentContextLimit();
     const modal = new Modal(this.app);
     modal.titleEl.setText("选择收藏（Manual AI 模板）");
     const search = modal.contentEl.createEl("input", {
@@ -713,6 +779,7 @@ export default class OmniCollectorPlugin extends Plugin {
             c,
             { submit: (id, reply) => this.engine.submitManualAI(id, reply).then(() => undefined) },
             vocabulary,
+            { commentLimit },
           );
         });
       }
@@ -729,6 +796,7 @@ export default class OmniCollectorPlugin extends Plugin {
   private async openManualAIBatchPicker(): Promise<void> {
     const collections = await this.engine.listCollections().catch(() => []);
     const vocabulary = await this.tagVocabulary().catch(() => undefined);
+    const commentLimit = await this.commentContextLimit();
     const modal = new Modal(this.app);
     modal.titleEl.setText("Manual AI 批量打包");
     const filters = modal.contentEl.createEl("div", { cls: "omni-batch-filter" });
@@ -794,6 +862,7 @@ export default class OmniCollectorPlugin extends Plugin {
               .then((res) => Number(res.payload?.saved ?? 0)),
         },
         vocabulary,
+        { commentLimit },
       );
     });
     refresh();

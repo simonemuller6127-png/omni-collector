@@ -9,12 +9,18 @@ export interface ManualBatchSource {
   submit(collectionIds: string[], reply: string): Promise<number>;
 }
 
+export interface ManualBatchOptions {
+  /** 热门评论进 prompt 的条数上限（business_rules ai_comment_context_limit，缺省走纯函数默认）。 */
+  commentLimit?: number;
+}
+
 /** 打开 Manual AI 批量弹窗：复制模板 → 粘贴批量回复 → 生成逐条建议。 */
 export function openManualAIBatchModal(
   app: App,
   items: CollectionDTO[],
   source: ManualBatchSource,
   vocabulary?: ManualVocabulary,
+  options?: ManualBatchOptions,
 ): void {
   const modal = new Modal(app);
   modal.titleEl.setText(`Manual AI 批量（${items.length} 条）`);
@@ -22,7 +28,7 @@ export function openManualAIBatchModal(
   const tpl = modal.contentEl.createEl("textarea", {
     attr: { rows: "16", style: "width:100%;" },
   });
-  tpl.value = buildManualBatchTemplate(items, vocabulary);
+  tpl.value = buildManualBatchTemplate(items, vocabulary, { commentLimit: options?.commentLimit });
   modal.contentEl
     .createEl("button", { text: "复制模板", cls: "omni-btn omni-btn-sm" })
     .addEventListener("click", () => {

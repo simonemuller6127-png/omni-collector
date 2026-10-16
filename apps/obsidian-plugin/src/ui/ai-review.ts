@@ -1,4 +1,7 @@
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
+import { CONTENT_TYPE_VALUES, describePayload, TYPE_LABELS } from "./ai-review-labels.js";
+
+export { CONTENT_TYPE_VALUES, describePayload, TYPE_LABELS } from "./ai-review-labels.js";
 
 export const VIEW_TYPE_OMNI_AI = "omni-collector-ai-review";
 
@@ -21,56 +24,36 @@ export interface AiReviewSource {
   openManualAIBatch?: () => void;
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  suggested_tag: "标签建议",
-  suggested_topic: "Topic 建议",
-  suggested_summary: "摘要建议",
-  suggested_group: "分组建议",
-  suggested_relation: "关联建议",
-};
-
-/** 解析 suggested_tag payload：JSON 数组 / 逗号分隔 / 单个。 */
-function parseTagList(payload: string): string[] {
-  const trimmed = (payload ?? "").trim();
-  if (!trimmed) return [];
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (Array.isArray(parsed)) return parsed.map(String);
-    if (typeof parsed === "string") return [parsed];
-    if (parsed && Array.isArray((parsed as { tags?: unknown[] }).tags)) {
-      return (parsed as { tags: unknown[] }).tags.map(String);
-    }
-  } catch {
-    // 逗号分隔兜底
-  }
-  return trimmed.split(",").map((s) => s.trim()).filter(Boolean);
-}
+const CONTENT_TYPE_BADGE_PREFIX = "形式：";
 
 function renderPayload(
   container: HTMLElement,
   suggestion: AiSuggestionView,
 ): void {
-  const payload = suggestion.payload ?? "";
-  if (suggestion.suggestion_type === "suggested_tag") {
+  const render = describePayload(suggestion);
+  if (render.kind === "chips") {
     const chips = container.createEl("div", { cls: "omni-chip-row" });
-    for (const tag of parseTagList(payload)) {
+    for (const tag of render.tags) {
       chips.createEl("span", { text: `#${tag}`, cls: "omni-badge omni-badge-tag" });
     }
     return;
   }
-  if (suggestion.suggestion_type === "suggested_group") {
-    try {
-      const data = JSON.parse(payload) as { name?: string; collection_ids?: string[] };
-      container.createEl("span", {
-        text: `分组「${data.name ?? "未命名"}」 · ${data.collection_ids?.length ?? 0} 条`,
-        cls: "omni-badge omni-badge-group",
-      });
-      return;
-    } catch {
-      // 落到普通文本
-    }
+  if (render.kind === "content-type") {
+    container.createEl("span", {
+      text: `${CONTENT_TYPE_BADGE_PREFIX}${render.value || "未知"}`,
+      cls: "omni-badge omni-badge-tag",
+      attr: { title: "形式标签只写入 collections.content_type，不会进入 Tag Atlas" },
+    });
+    return;
   }
-  container.createEl("span", { text: payload, cls: "omni-ai-text" });
+  if (render.kind === "group") {
+    container.createEl("span", {
+      text: `分组「${render.name}」 · ${render.count} 条`,
+      cls: "omni-badge omni-badge-group",
+    });
+    return;
+  }
+  container.createEl("span", { text: render.text, cls: "omni-ai-text" });
 }
 
 export class OmniAiReviewView extends ItemView {
@@ -89,6 +72,11 @@ export class OmniAiReviewView extends ItemView {
 
   getDisplayText(): string {
     return "AI 建议审核";
+  }
+
+  /** 视图标识图标：AI 审核用「机器人」，与其他视图区分。 */
+  getIcon(): string {
+    return "bot";
   }
 
   async onOpen(): Promise<void> {

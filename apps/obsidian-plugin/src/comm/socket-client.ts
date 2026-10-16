@@ -534,6 +534,20 @@ export class EngineClient {
     return (res.payload?.tags as TagDTO[]) ?? [];
   }
 
+  /**
+   * 引擎侧疑似重复 Tag（权威实现 findNearDuplicateTags）。
+   * 阈值/截断数走 business_rules，Tag 数不足时引擎返回空数组。
+   */
+  async listDuplicateTags(): Promise<Array<{ a: string; b: string }>> {
+    const res = await this.request({
+      request_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message_type: "TAG_LIST",
+      payload: {},
+    });
+    return (res.payload?.duplicateTags as Array<{ a: string; b: string }>) ?? [];
+  }
+
   /** 为 Tag 添加别名。 */
   async addTagAlias(tag: string, alias: string): Promise<OmniMessage> {
     return this.request({
